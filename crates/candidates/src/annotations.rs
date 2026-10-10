@@ -60,6 +60,7 @@ pub struct Annotation {
     pub replay_sha256: String,
     #[serde(flatten)]
     pub incident: IncidentAnchor,
+    pub player_id: Value,
     pub raw_time: f64,
     pub evidence: Value,
     pub label: u8,
@@ -84,18 +85,17 @@ impl Annotation {
             return Err("invalid annotation fingerprint, label, time, or provenance".into());
         }
         let candidate = match &self.incident {
-            IncidentAnchor::BumpingTeammate {
-                frame, initiator, ..
-            } => Candidate {
+            IncidentAnchor::BumpingTeammate { frame, .. } => Candidate {
                 kind: self.incident.kind().name().into(),
                 frame: *frame,
                 raw_time: self.raw_time,
-                player_id: initiator.clone(),
+                player_id: self.player_id.clone(),
                 evidence: self.evidence.clone(),
                 source_event_ids: self.source_event_ids.clone(),
                 features: Vec::new(),
             },
         };
+        crate::native_bump::validate_evidence(&candidate.evidence)?;
         if candidate.anchor()? != self.incident {
             return Err("annotation anchor does not agree with its event evidence".into());
         }
@@ -151,8 +151,14 @@ impl AnnotationDataset {
             if !recordings.contains(&annotation.replay_sha256) {
                 return Err("annotation references an undeclared replay".into());
             }
-            if !incidents.insert((&annotation.replay_sha256, annotation.incident.key()?)) {
-                return Err("duplicate annotated incident".into());
+            let player =
+                serde_json::to_string(&annotation.player_id).map_err(|error| error.to_string())?;
+            if !incidents.insert((
+                &annotation.replay_sha256,
+                annotation.incident.key()?,
+                player,
+            )) {
+                return Err("duplicate player-specific annotation".into());
             }
         }
         Ok(())

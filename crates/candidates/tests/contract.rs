@@ -5,6 +5,31 @@ fn facts() -> ReplayFacts {
 }
 
 #[test]
+fn events_only_candidates_include_both_subjects_with_eight_incident_features() {
+    let kind = MistakeKind::BumpingTeammate;
+    let batch = kind.candidates(&facts()).unwrap();
+    assert_eq!(batch.candidates.len(), 2);
+    assert_eq!(batch.feature_names.len(), 8);
+    assert!(batch.sampling.is_none());
+    assert!(batch.feature_definitions.is_empty());
+    let initiator = &batch.candidates[0];
+    let victim = &batch.candidates[1];
+    assert_eq!(initiator.player_id, initiator.evidence["initiator"]);
+    assert_eq!(victim.player_id, victim.evidence["victim"]);
+    assert_eq!(initiator.features, victim.features);
+    assert_eq!(initiator.evidence, victim.evidence);
+    assert_eq!(initiator.anchor().unwrap(), victim.anchor().unwrap());
+    assert_eq!(initiator.source_event_ids, victim.source_event_ids);
+    assert_eq!(
+        kind.initiator_candidates(&facts())
+            .unwrap()
+            .candidates
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn candidate_entry_point_rejects_failed_suppliers_and_duplicate_events() {
     let kind = MistakeKind::BumpingTeammate;
     let mut replay = facts();
@@ -30,6 +55,6 @@ fn serialized_batches_reject_changed_feature_contracts_and_duplicate_contacts() 
     restored.candidates.push(restored.candidates[0].clone());
     assert!(restored.validate().is_err());
     restored = batch;
-    restored.candidates[0].features[0] = f64::INFINITY;
+    restored.candidates[0].features[0] = Some(f64::INFINITY);
     assert!(restored.validate().is_err());
 }

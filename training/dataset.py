@@ -7,12 +7,23 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from training import bump_dataset
+
 
 def load(path):
-    table = pq.read_table(path)
-    metadata = table.schema.metadata
+    metadata = pq.read_schema(path).metadata
+    if metadata and bump_dataset.METADATA_KEY in metadata:
+        if b"rl_mistake_analysis" in metadata:
+            raise ValueError("A table must declare exactly one feature contract")
+        table, contract = bump_dataset.load(path, labeled=True)
+        contract = {
+            **contract,
+            "feature_names": [d["name"] for d in contract["feature_definitions"]],
+        }
+        return table, contract
     if metadata is None or b"rl_mistake_analysis" not in metadata:
         raise ValueError("Missing rl_mistake_analysis table metadata")
+    table = pq.read_table(path)
     contract = json.loads(metadata[b"rl_mistake_analysis"])
     names = contract.get("feature_names")
     if (
@@ -82,6 +93,8 @@ def load(path):
 
 
 def arrays(table, contract):
+    if contract["input_schema"] == "bumping_teammate.context.v1":
+        return bump_dataset.arrays(table, contract)
     features = np.column_stack(
         [table[name].to_numpy() for name in contract["feature_names"]]
     )

@@ -97,7 +97,7 @@ rl-mistake-analysis outputs
 
 All five supplier output forms are implemented using SubtrActor's collectors. `events` includes the analysis timeline and boost tracks; `replay_data` includes structured player and ball frames; `stats` includes accumulated statistics; `stats_timeline` includes full statistics snapshots; `features` includes a numeric matrix with metadata and column headers. The three additional exporters use the supplier's default configurations. Unknown, empty, or duplicate selections are errors.
 
-The existing `events` and `replay-data` commands retain their individual JSON formats. Candidate extraction and scoring accept either the existing events document or a combined export containing `events`. Current candidate features use the event records; exporting frame data does not change the model feature contract.
+The existing `events` and `replay-data` commands retain their individual JSON formats. Run `candidates < events.json` to obtain both participants in each teammate bump, with eight incident measurements per candidate. This command also accepts combined exports containing `events`; it does not require frames or a sampling configuration. The judged `player_id` distinguishes the two reviews. Subject-specific training and scoring compute the 105 context features separately, using `bump-features` and the sampling method recorded in the model contract. Existing eight-feature models and their training preparation retain their initiator-only subject convention.
 
 To score those incidents with an installed model:
 
@@ -142,7 +142,7 @@ X, y, replay_groups = arrays(table, contract)
 
 `X` contains features, `y` contains labels, and `replay_groups` identifies recordings for grouped training and evaluation splits. Training reads this table without parsing replays. Downloaded recordings in `data/` and generated tables in `artifacts/` are ignored by Git.
 
-For the extracted 105-feature teammate-bump context table, use `training.bump_dataset` to join reviewed incidents to training features and load boolean and nullable measurements. Each reviewed incident identifies the player being judged. Its reader takes feature order from the stored context contract and preserves missing values. See [context training preparation](docs/mistakes/bumping_teammate.md#prepare-context-features-for-training). The native eight-feature table and context table have separate readers and contracts.
+For the extracted 105-feature teammate-bump context table, use `training.bump_dataset` to join reviewed incidents to training features. Each reviewed incident identifies the player being judged. The shared `training.dataset` reader also accepts labeled context tables, preserving feature order and missing values. See [context training preparation](docs/mistakes/bumping_teammate.md#prepare-context-features-for-training). The native eight-feature and context contracts remain distinct.
 
 ### Compare models
 

@@ -1,6 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataType {
     Boolean,
@@ -8,23 +8,24 @@ pub enum DataType {
     U32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FeatureDefinition {
     pub name: String,
     pub data_type: DataType,
     pub nullable: bool,
-    pub source: &'static str,
+    pub source: String,
 }
 
 pub fn definitions() -> Vec<FeatureDefinition> {
     use DataType::{Boolean, F32, U32};
     let mut definitions = Vec::new();
-    let mut add = |name: String, data_type, nullable, source| {
+    let mut add = |name: String, data_type, nullable, source: &str| {
         definitions.push(FeatureDefinition {
             name,
             data_type,
             nullable,
-            source,
+            source: source.into(),
         });
     };
     for name in [

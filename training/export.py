@@ -89,7 +89,7 @@ def model_entry(
         not isinstance(revision, str) or not revision.strip() for revision in revisions
     ):
         raise ValueError("Missing training extraction provenance")
-    return {
+    entry = {
         "kind": contract["kind"],
         "version": version,
         "input_schema": contract["input_schema"],
@@ -105,6 +105,9 @@ def model_entry(
         },
         "files": files,
     }
+    if contract["input_schema"] == "bumping_teammate.context.v1":
+        entry["sampling"] = contract["sampling"]
+    return entry
 
 
 def write_manifest(directory, version, models):

@@ -24,11 +24,34 @@ python -m training.bump_features data/replay_analysis artifacts/team_bump_featur
   --replay-ids data/replay_ids.json
 ```
 
-`--replay-ids` selects a JSON array of replay filename stems; omitting it selects every `.json` file in the supplied directory. The exporter validates all selected inputs before replacing the output. Each unique replay checksum contributes one set of rows. Identical feature batches under different filenames retain all replay IDs and source paths as aliases in the metadata; conflicting batches are errors. This table carries incident and subject identities but no labels. The existing `prepare` and `score` commands use the eight-feature `bumping_teammate.native.v1` model contract.
+`--replay-ids` selects a JSON array of replay filename stems; omitting it selects every `.json` file in the supplied directory. The exporter validates all selected inputs before replacing the output. Each unique replay checksum contributes one set of rows. Identical feature batches under different filenames retain all replay IDs and source paths as aliases in the metadata; conflicting batches are errors. This table carries incident and subject identities but no labels. `prepare` retains the eight-feature native contract. `score` selects the extractor specified by the chosen model's input schema and sampling contract.
+
+## Review and score both participants
+
+Create eight-feature review candidates from the events output:
+
+```sh
+target/debug/rl-mistake-analysis candidates < artifacts/match.events.json > artifacts/match.candidates.json
+target/debug/rl-mistake-analysis contract bumping_teammate
+```
+
+The candidate output contains one batch. Import that batch into the review application's `candidate_batch` format with the replay ID and playback clock mapping. Each collision has two candidates with the same source event IDs and different `player_id` values. Candidate identity includes the judged player. Physical initiator and victim roles remain in `evidence`; they do not determine the review verdict.
+
+Each candidate contains the eight incident measurements listed below. Both players share these measurements; the judged `player_id` carries their different identities. Candidate extraction needs no replay frames or sampling configuration. The 105 subject-specific features are computed by `bump-features` for training and scoring.
+
+The review application's bundle and migration exports include `annotations` for linked participant candidates, including the eight-feature candidates. Each annotation identifies the judged player explicitly, so both participants can have different decisions. Unlinked moments remain in the review export and are excluded from the training annotations. Prepare the context training table with `training.bump_dataset`, then load it with `training.dataset.load` and `training.dataset.arrays` or the existing context reader.
+
+`training.export.model_entry` records the context feature names and sampling method in the model catalog. Score a compatible context model with:
+
+```sh
+target/debug/rl-mistake-analysis score MODEL_DIRECTORY bumping_teammate VERSION < artifacts/match.json
+```
+
+Production computes the same subject-specific measurements as `bump-features` and scores both rows independently. Nullable measurements become `NaN` at the model boundary, exactly as in training. A context model requires combined `events,replay_data`; missing inputs or incompatible contracts are errors. Existing eight-feature models and their training preparation retain their initiator-only subject convention. Training a model to judge either participant requires player-specific reviews and context features.
 
 ## Native candidate and model features
 
-`bumping_teammate` identifies an incident by `frame`, `initiator`, and `victim` within a recording. The initiator is the subject; opponent contacts are excluded. The candidate library calculates the following eight model inputs, in the order defined by `bumping_teammate.native.v1`. These values appear in each candidate's `features`, become the numeric feature columns in prepared training tables, and are supplied to the model during inference:
+`bumping_teammate` identifies an incident by `frame`, `initiator`, and `victim` within a recording. Both participants are review subjects; opponent contacts are excluded. The candidate library calculates the following eight incident measurements, in the order defined by `bumping_teammate.native.v1`. Existing eight-feature training and scoring use these measurements to judge the initiator:
 
 1. `contact_confidence`
 2. `closing_speed`
@@ -114,7 +137,7 @@ All event lookups end at the current play segment's end. A next touch or pickup 
 
 The contract contains 105 measurements after expanding participant, axis, and category names. `255` is the raw boost unit maximum; quaternion coefficients and vector operations are mathematical definitions. This extractor introduces no numeric heuristic thresholds. Native event and state definitions retain SubtrActor's own detector thresholds.
 
-The feature table is unlabeled. Attaching reviews requires the exact replay, collision, and judged-player identities. The eight-feature preparation and inference contract remains `bumping_teammate.native.v1`; this context contract requires its own model integration.
+The feature table is unlabeled. Attaching reviews requires the exact replay, collision, and judged-player identities. Context candidates and production inference use the same participant extractor. Native preparation and native models retain `bumping_teammate.native.v1`.
 
 ## Prepare context features for training
 
@@ -129,6 +152,8 @@ The annotation document contains `schema_version: 1` and an `annotations` list. 
 
 The join uses the exact replay checksum, frame, initiator, victim, and judged player, and checks the replay timestamp. Both participants can have different labels for one collision. A review without an explicit `player_id`, a duplicate review, or an unmatched review is an error. Unreviewed rows are excluded from the labeled table; they are never assigned negative labels. The output retains the original feature metadata and adds `label`, `annotation_engine_revision`, and optional rejection reasons.
 
+The Rust annotation validator also requires `player_id` and preserves separate participant reviews. Legacy native `prepare` accepts only initiator labels; victim labels must use the context dataset builder above.
+
 Read the labeled context table with:
 
 ```python
@@ -140,4 +165,4 @@ X, y, replay_groups = arrays(table, contract)
 
 Columns follow `feature_definitions` in the stored contract. Boolean flags become numerical `0` and `1`; numeric measurements retain their values; null measurements become `NaN`. Incident identities, `raw_time`, sample records, and provenance columns are excluded from model inputs. Timing features declared in the contract remain model inputs. Missing values are preserved for estimators that support them, including CatBoost. An estimator that requires imputation must include its imputer inside the estimator pipeline.
 
-Use `replay_groups` to keep all subjects and collisions from a replay together in both the holdout partition and cross-validation. Save row identities, split indices, and the ordered feature contract alongside evaluation artifacts. A numeric CatBoost model can declare `training.onnx_export.catboost` as its exporter; the tracker verifies probabilities with CPU ONNX Runtime and saves the winning graph and hyperparameters. The boolean flags are numeric inputs, so the context model can use CatBoost's numeric ONNX export. A context model requires matching inference integration before it can be published for consumers; the existing inference contract remains eight features.
+Use `replay_groups` to keep all subjects and collisions from a replay together in both the holdout partition and cross-validation. Save row identities, split indices, and the ordered feature contract alongside evaluation artifacts. A numeric CatBoost model can declare `training.onnx_export.catboost` as its exporter; the tracker verifies probabilities with CPU ONNX Runtime and saves the winning graph and hyperparameters. The boolean flags are numeric inputs, so the context model can use CatBoost's numeric ONNX export. A context model's release metadata records its ordered inputs and sampling method. Production inference validates both before scoring either participant.

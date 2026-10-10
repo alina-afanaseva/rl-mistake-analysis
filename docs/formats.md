@@ -52,18 +52,22 @@ Each event has a `meta` object and a `payload`. Inside `meta`, `stream` identifi
 
 ## Candidates
 
-Candidate extraction selects incidents worth reviewing and calculates model features. Results are grouped by recording and mistake kind into a **batch**.
+Candidate extraction selects incidents worth reviewing and records eight incident measurements. Results are grouped by recording and mistake kind into a **batch**. Subject-specific training and scoring features are computed separately.
 
 | Batch field | Meaning |
 | --- | --- |
 | `kind` | Mistake kind |
 | `input_schema` | Feature contract identifier |
-| `feature_names` | Ordered model input feature names |
+| `feature_names` | Ordered incident measurement names |
 | `engine_revision` | Supplier revision that produced the events |
 | `replay_sha256` | Checksum of the original recording bytes |
 | `candidates` | Selected incidents |
 
 Each candidate records its `kind`, original `frame` and `raw_time`, subject `player_id`, numeric `features`, original event `evidence`, and `source_event_ids`. Features follow the batch's declared order. Evidence preserves the supplier information needed to identify and inspect the incident.
+
+Each teammate collision produces two candidates with the same eight measurements, evidence, collision anchor, and source event IDs. Their `player_id` values distinguish the independent reviews. The incident measurements alone do not express either player's responsibility.
+
+Subject-specific scoring uses the separate context feature contract, including its sampling configuration and ordered typed feature definitions. Unavailable context measurements remain JSON `null`; boolean model inputs are `0` or `1`. Eight-feature models were trained to judge the initiator and cannot judge victims using the same incident vector.
 
 ## Human annotations
 
@@ -92,6 +96,7 @@ The `id` inside the `download` object is a Ballchasing identifier, not a filenam
 | `replay_sha256` | Checksum of a recording listed in `replays` |
 | `kind` | Mistake kind |
 | Kind-specific identity fields | Fields required to identify an incident for this mistake kind |
+| `player_id` | Required identity of the judged participant |
 | `raw_time` | Original event time |
 | `evidence` | Original supplier event payload |
 | `label` | Human decision: `0` or `1` |
@@ -103,7 +108,9 @@ To retrieve an annotation's recording, find the entry in `replays` with the same
 
 The fetch tool saves the original binary file unchanged. Its local filename is the recording's 64-character checksum followed by `.replay`. Without a download reference, supply the original file with that name in the preparation directory.
 
-Within a recording, each kind defines the fields that identify an incident. Identity, time, and evidence must agree; duplicate incidents are errors. Preparation uses these identity fields to match labels with extracted incidents. Source event IDs are provenance, rather than the matching key.
+Within a recording, each kind defines the fields that identify an incident. The judged player, incident identity, time, and evidence must agree; duplicate reviews of the same participant in an incident are errors. Both participants can have separate decisions. Source event IDs are provenance, rather than the matching key.
+
+Native `prepare` accepts initiator labels only and rejects victim labels before reading recordings. Use `training.bump_dataset` to prepare player-specific context training data for either participant. An annotation without `player_id` is rejected; it is never assigned to the initiator implicitly.
 
 ## Training tables
 
@@ -126,6 +133,7 @@ ONNX contains the classifier's operations, learned parameters, and exported prep
 | `version` | Model release version |
 | `input_schema` | Required feature contract identifier |
 | `feature_names` | Required feature names in model input order |
+| `sampling` | Required context sampling configuration; omitted by native models |
 | `runtime` | `onnx` |
 | `model_file` | Relative path to the ONNX graph |
 | `evaluation_file` | Relative path to the evaluation report |
