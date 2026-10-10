@@ -1,5 +1,6 @@
 /target/
 /.venv/
+/.uv-cache/
 /.direnv/
 __pycache__/
 .pytest_cache/
@@ -8,3 +9,6 @@ __pycache__/
 *.egg-info/
 /data/
 /models/
+/mlruns/
+/mlflow.db
+/experiments/

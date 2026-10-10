@@ -115,3 +115,29 @@ All event lookups end at the current play segment's end. A next touch or pickup 
 The contract contains 105 measurements after expanding participant, axis, and category names. `255` is the raw boost unit maximum; quaternion coefficients and vector operations are mathematical definitions. This extractor introduces no numeric heuristic thresholds. Native event and state definitions retain SubtrActor's own detector thresholds.
 
 The feature table is unlabeled. Attaching reviews requires the exact replay, collision, and judged-player identities. The eight-feature preparation and inference contract remains `bumping_teammate.native.v1`; this context contract requires its own model integration.
+
+## Prepare context features for training
+
+`training.bump_dataset` joins reviewed incidents to an existing player-specific context feature table without extracting replay data again:
+
+```sh
+python -m training.bump_dataset artifacts/team_bump_features.parquet \
+  data/subject_reviews.json artifacts/team_bump_training.parquet
+```
+
+The annotation document contains `schema_version: 1` and an `annotations` list. Each review supplies `kind: "bumping_teammate"`, `replay_sha256`, `frame`, `initiator`, `victim`, the judged `player_id`, `raw_time`, integer `label` (`0` or `1`), and `engine_revision`. Player identities use the supplier's JSON objects. Copy identity fields and the replay timestamp from the extracted row. A review can also include `reject_reason` and `source_event_ids`; supplied event IDs must agree with the extracted event.
+
+The join uses the exact replay checksum, frame, initiator, victim, and judged player, and checks the replay timestamp. Both participants can have different labels for one collision. A review without an explicit `player_id`, a duplicate review, or an unmatched review is an error. Unreviewed rows are excluded from the labeled table; they are never assigned negative labels. The output retains the original feature metadata and adds `label`, `annotation_engine_revision`, and optional rejection reasons.
+
+Read the labeled context table with:
+
+```python
+from training.bump_dataset import arrays, load
+
+table, contract = load("artifacts/team_bump_training.parquet", labeled=True)
+X, y, replay_groups = arrays(table, contract)
+```
+
+Columns follow `feature_definitions` in the stored contract. Boolean flags become numerical `0` and `1`; numeric measurements retain their values; null measurements become `NaN`. Incident identities, `raw_time`, sample records, and provenance columns are excluded from model inputs. Timing features declared in the contract remain model inputs. Missing values are preserved for estimators that support them, including CatBoost. An estimator that requires imputation must include its imputer inside the estimator pipeline.
+
+Use `replay_groups` to keep all subjects and collisions from a replay together in both the holdout partition and cross-validation. Save row identities, split indices, and the ordered feature contract alongside evaluation artifacts. A numeric CatBoost model can declare `training.onnx_export.catboost` as its exporter; the tracker verifies probabilities with CPU ONNX Runtime and saves the winning graph and hyperparameters. The boolean flags are numeric inputs, so the context model can use CatBoost's numeric ONNX export. A context model requires matching inference integration before it can be published for consumers; the existing inference contract remains eight features.
