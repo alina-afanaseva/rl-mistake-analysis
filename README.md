@@ -75,18 +75,34 @@ cargo install --locked --git https://github.com/assembledev/rl-mistake-analysis.
 rl-mistake-analysis --help
 ```
 
-For example, extract events and candidates from your own recording:
+Extract both analysis events and structured replay data from your own recording:
 
 ```sh
 mkdir -p artifacts
-rl-mistake-analysis events match.replay > artifacts/events.json
-rl-mistake-analysis candidates < artifacts/events.json
+rl-mistake-analysis extract match.replay > artifacts/match.json
+rl-mistake-analysis candidates < artifacts/match.json
 ```
+
+Each extraction reads one `.replay` file and writes one JSON document. Selected outputs share the recording's checksum and supplier revision and are stored under `outputs`. All selected collectors run in one replay pass. The default selection is `events,replay_data`.
+
+Use `--outputs` to select any combination of the five outputs:
+
+```sh
+rl-mistake-analysis extract match.replay --outputs events > artifacts/match.events.json
+rl-mistake-analysis extract match.replay --outputs replay_data > artifacts/match.frames.json
+rl-mistake-analysis extract match.replay --outputs events,replay_data > artifacts/match.json
+rl-mistake-analysis extract match.replay --outputs events,replay_data,stats,stats_timeline,features > artifacts/match.all.json
+rl-mistake-analysis outputs
+```
+
+All five supplier output forms are implemented using SubtrActor's collectors. `events` includes the analysis timeline and boost tracks; `replay_data` includes structured player and ball frames; `stats` includes accumulated statistics; `stats_timeline` includes full statistics snapshots; `features` includes a numeric matrix with metadata and column headers. The three additional exporters use the supplier's default configurations. Unknown, empty, or duplicate selections are errors.
+
+The existing `events` and `replay-data` commands retain their individual JSON formats. Candidate extraction and scoring accept either the existing events document or a combined export containing `events`. Current candidate features use the event records; exporting frame data does not change the model feature contract.
 
 To score those incidents with an installed model:
 
 ```sh
-rl-mistake-analysis score MODEL_DIRECTORY KIND VERSION < artifacts/events.json
+rl-mistake-analysis score MODEL_DIRECTORY KIND VERSION < artifacts/match.json
 ```
 
 The executable reads files or JSON and writes results. Applications importing the libraries call Rust APIs directly.

@@ -1,3 +1,4 @@
+mod output;
 mod prepare;
 mod replay;
 
@@ -10,6 +11,9 @@ use std::{
 };
 
 const HELP: &str = "Usage:
+  rl-mistake-analysis outputs
+  rl-mistake-analysis extract FILE.replay [--outputs TYPE,TYPE,...] > replay.json
+  rl-mistake-analysis replay-data FILE.replay > replay.json
   rl-mistake-analysis events FILE.replay > events.json
   rl-mistake-analysis candidates < events.json
   rl-mistake-analysis contract KIND
@@ -18,8 +22,13 @@ const HELP: &str = "Usage:
   rl-mistake-analysis validate-manifest DIRECTORY
   rl-mistake-analysis score MODEL_DIRECTORY KIND VERSION < events.json
 
+outputs lists all five subtr-actor output forms and their implementation status.
+extract exports selected outputs for one replay in a single JSON document.
+Without --outputs, extract selects events and replay_data.
+Available output types: events, replay_data, stats, stats_timeline, features.
+replay-data exports the full structured subtr-actor replay, including frames and gameplay events.
 events extracts subtr-actor events from a Rocket League replay.
-candidates emits candidates for each implemented mistake kind.
+candidates emits candidates for each implemented mistake kind; it also accepts extract JSON containing events.
 contract emits a kind's feature schema and ordered feature names.
 validate-annotations checks replay references and incident annotations.
 prepare extracts features for annotated incidents and writes a Parquet table.
@@ -34,6 +43,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("{HELP}");
             return Ok(());
         }
+        [command] if command == "outputs" => output::catalog(),
+        [command, path, options @ ..] if command == "extract" => {
+            let selected = output::selection(options)?;
+            replay::extract(&fs::read(path)?, &selected)?
+        }
+        [command, path] if command == "replay-data" => replay::replay_data(&fs::read(path)?)?,
         [command, path] if command == "events" => replay::events(&fs::read(path)?)?,
         [command] if command == "candidates" => {
             let replay = read_events()?;
@@ -85,7 +100,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn read_events() -> Result<ReplayFacts, Box<dyn std::error::Error>> {
     let mut text = String::new();
     io::stdin().read_to_string(&mut text)?;
-    Ok(serde_json::from_str(&text)?)
+    let mut document: serde_json::Value = serde_json::from_str(&text)?;
+    if document.get("outputs").is_some() {
+        let events = document
+            .pointer_mut("/outputs/events/events/events")
+            .ok_or("extracted replay must include a valid events output")?
+            .take();
+        document["events"] = events;
+    }
+    Ok(serde_json::from_value(document)?)
 }
 
 fn main() {

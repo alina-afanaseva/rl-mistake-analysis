@@ -4,12 +4,35 @@ These formats connect replay extraction, human review, training, and inference. 
 
 | Data | Format | Used for |
 | --- | --- | --- |
+| Selected replay outputs | JSON | Analysis timeline and structured frames for one recording |
 | Replay events | JSON | Input to candidate extraction |
 | Candidates | JSON | Incidents for review or scoring |
 | Human annotations | JSON | Reviewed incidents and recording references |
 | Training table | Parquet | Features and labels for model fitting |
 | Model catalog | `manifest.json` | Available releases and required artifacts |
 | Model | ONNX | Classifier computation and learned parameters |
+
+## Selected replay outputs
+
+`extract FILE.replay` exports one recording as one JSON document, with `events,replay_data` selected by default. `--outputs` accepts any comma-separated selection of the five output keys below. A selection computes only its requested outputs, with all selected collectors sharing one replay pass. Multiple recordings require separate extractions and separate JSON files.
+
+The document carries the same identity fields as the replay-events format below: `name`, `schema_version: 1`, `status`, `revision`, `replay_sha256`, and optional `rocket_league_id`. An `outputs` object contains exactly the selected payloads:
+
+| Output key | Payload |
+| --- | --- |
+| `events` | Full SubtrActor analysis event timeline: event records, lightweight frame context, replay metadata, summaries, and compressed numeric tracks, including observed boost amounts |
+| `replay_data` | Full SubtrActor structured replay: player and ball frame data, replay metadata, available inputs/camera state, and basic replay event streams |
+| `stats` | Accumulated statistics from the default modules, keyed by module name under `modules`, with `replay_meta` |
+| `stats_timeline` | Full SubtrActor statistics snapshots at each replay frame, with configuration, metadata, and events |
+| `features` | Numeric matrix as JSON rows under `matrix`, with SubtrActor's replay metadata and column headers under `metadata` |
+
+Payloads preserve the supplier's field names and structure. Analysis event records are at `outputs.events.events.events`; boost tracks are at `outputs.events.accumulation_tracks`; structured frame data is at `outputs.replay_data.frame_data`. Presence of a supplier field does not guarantee a measurement is available in every replay or frame.
+
+The feature matrix uses `NDArrayCollector<f32>`'s default feature adders: ball rigid body globally, and each player's rigid body, boost, and jump state. `metadata.column_headers` describes global and per-player columns; `metadata.replay_meta` defines the player order. Each matrix row stores the global columns followed by the player columns in that order. This supplier matrix is separate from the mistake model's feature contract. Statistics use the supplier's default modules.
+
+Candidate extraction and scoring accept this document when the `events` output is present, using its event records with the shared identity. An export without that output is rejected. The other selected payloads remain available for feature calculations that use additional context.
+
+`outputs` lists the five implemented output keys. Unknown, empty, and duplicate selections fail; they are never replaced with another output. The five forms correspond to SubtrActor's [documented primary output layers](https://github.com/rlrml/subtr-actor/blob/40ec533da4184e46418b742804818a326b50b489/src/lib.rs#L30).
 
 ## Replay events
 
