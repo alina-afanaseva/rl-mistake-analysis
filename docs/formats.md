@@ -142,17 +142,6 @@ The ONNX interface accepts one float32 table `[N, F]` and returns probabilities 
 
 A prediction batch carries the recording and feature-contract metadata, a `model` object containing `kind`, `version`, and `sha256`, and a `predictions` list. Each prediction contains the original `candidate`, probability `score`, and boolean `keep`. An incident is retained when its score meets `keep_threshold`. Stored predictions identify the model that produced them.
 
-## Example: teammate bump
+## Mistake-specific contracts
 
-`bumping_teammate` identifies an incident by `frame`, `initiator`, and `victim` within a recording. The initiator is the subject; opponent contacts are excluded. The candidate library calculates the following eight model inputs, in the order defined by `bumping_teammate.native.v1`. These values appear in each candidate's `features`, become the numeric feature columns in prepared training tables, and are supplied to the model during inference:
-
-1. `contact_confidence`
-2. `closing_speed`
-3. `victim_impulse`
-4. `contact_distance`
-5. `strength`
-6. `initiator_height`
-7. `victim_height`
-8. `victim_distance_to_own_goal`
-
-The first five copy measurements from the supplier's bump event (`confidence` becomes `contact_confidence`). The last three are calculated by this project from the supplier's player positions and team information: two heights and the victim's distance to their own goal. The complete vector is this project's feature contract, rather than the raw supplier event.
+[Teammate bump](mistakes/bumping_teammate.md) documents incident identity, candidate model features, context feature extraction, and sampling.

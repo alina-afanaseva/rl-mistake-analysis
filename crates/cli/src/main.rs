@@ -2,6 +2,7 @@ mod output;
 mod prepare;
 mod replay;
 
+use rl_mistake_analysis_candidates::bump_features::{self, FeatureSampling, ReplayAnalysis};
 use rl_mistake_analysis_candidates::{MistakeKind, ReplayFacts};
 use rl_mistake_analysis_inference::{Model, manifest::Manifest};
 use std::{
@@ -16,6 +17,8 @@ const HELP: &str = "Usage:
   rl-mistake-analysis replay-data FILE.replay > replay.json
   rl-mistake-analysis events FILE.replay > events.json
   rl-mistake-analysis candidates < events.json
+  rl-mistake-analysis bump-features SAMPLING.json [--player PLAYER_ID_JSON] < replay.json
+  rl-mistake-analysis bump-feature-contract
   rl-mistake-analysis contract KIND
   rl-mistake-analysis validate-annotations ANNOTATIONS.json
   rl-mistake-analysis prepare ANNOTATIONS.json REPLAY_DIRECTORY OUTPUT.parquet KIND
@@ -29,6 +32,10 @@ Available output types: events, replay_data, stats, stats_timeline, features.
 replay-data exports the full structured subtr-actor replay, including frames and gameplay events.
 events extracts subtr-actor events from a Rocket League replay.
 candidates emits candidates for each implemented mistake kind; it also accepts extract JSON containing events.
+bump-features computes subject-specific measurements from combined events,replay_data exports.
+SAMPLING.json must specify method: first_acceleration_peak_then_minimum; no defaults are supplied.
+Without --player, bump-features emits both participant perspectives for each teammate bump.
+bump-feature-contract lists the ordered feature definitions for those measurements.
 contract emits a kind's feature schema and ordered feature names.
 validate-annotations checks replay references and incident annotations.
 prepare extracts features for annotated incidents and writes a Parquet table.
@@ -44,6 +51,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         [command] if command == "outputs" => output::catalog(),
+        [command] if command == "bump-feature-contract" => serde_json::json!({
+            "input_schema": bump_features::SCHEMA,
+            "feature_definitions": bump_features::definitions(),
+        }),
+        [command, sampling, options @ ..] if command == "bump-features" => {
+            let sampling: FeatureSampling = serde_json::from_slice(&fs::read(sampling)?)?;
+            let subject = match options {
+                [] => None,
+                [flag, id] if flag == "--player" => Some(serde_json::from_str(id)?),
+                _ => return Err("expected --player followed by a JSON player ID".into()),
+            };
+            let analysis: ReplayAnalysis = serde_json::from_reader(io::stdin().lock())?;
+            serde_json::to_value(bump_features::extract(
+                &analysis,
+                sampling,
+                subject.as_ref(),
+            )?)?
+        }
         [command, path, options @ ..] if command == "extract" => {
             let selected = output::selection(options)?;
             replay::extract(&fs::read(path)?, &selected)?

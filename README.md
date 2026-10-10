@@ -12,9 +12,9 @@ The context view shows this project and the systems it interacts with. Downstrea
 
 ![C4 system context: downstream applications use rl-mistake-analysis, which extracts events through subtr-actor and retrieves recordings from Ballchasing.](docs/architecture/context.svg)
 
-The container view shows a CLI integration. A downstream application invokes the Rust CLI to obtain candidates and predictions. The CLI prepares training tables, and the Python downloader retrieves recordings referenced by reviewed datasets. Rust applications can also import the candidate and inference libraries directly.
+The container view shows a CLI integration. A downstream application invokes the Rust CLI to obtain candidates and predictions. The CLI prepares training tables. The Python replay feature-table builder requests player-specific replay features from the Replay CLI and writes unlabeled Parquet tables. The Python downloader retrieves recordings referenced by reviewed datasets. Rust applications can also import the candidate and inference libraries directly.
 
-![C4 container view: an example downstream application invokes Replay CLI for candidates and predictions and exports reviewed datasets; the CLI and downloader access dataset and model files.](docs/architecture/containers.svg)
+![C4 container view: a downstream application invokes Replay CLI; the replay feature-table builder requests player-specific replay features, and the CLI, builder and downloader access local files.](docs/architecture/containers.svg)
 
 ## Get started
 
@@ -107,6 +107,8 @@ rl-mistake-analysis score MODEL_DIRECTORY KIND VERSION < artifacts/match.json
 
 The executable reads files or JSON and writes results. Applications importing the libraries call Rust APIs directly.
 
+See [teammate-bump documentation](docs/mistakes/bumping_teammate.md) for context feature extraction, sampling, and feature contracts.
+
 ## Prepare data for training
 
 Work from a checkout of this repository. The Python modules in `training/` download recordings, read prepared feature tables, and generate release metadata. Use them from your model-training scripts.
@@ -149,6 +151,12 @@ Code and models have independent versions. One `manifest.json` catalog can list 
 ## Develop and contribute
 
 From this repository's directory:
+
+```sh
+nix-shell
+```
+
+The shell supplies native tools and activates the Python environment, including notebook dependencies. You can also activate the flake environment explicitly:
 
 ```sh
 nix develop

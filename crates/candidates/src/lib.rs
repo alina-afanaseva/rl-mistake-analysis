@@ -1,6 +1,7 @@
 //! Rocket League mistake candidates and features from subtr-actor replay facts.
 
 pub mod annotations;
+pub mod bump_features;
 pub mod input;
 pub mod kind;
 mod native_bump;
