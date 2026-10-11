@@ -150,11 +150,7 @@ impl<'a> Context<'a> {
             if kickoff_start > time {
                 end = end.min(kickoff_start);
             } else if kickoff_start >= start {
-                let first_touch = kickoff
-                    .field("first_touch_time")?
-                    .as_f64()
-                    .ok_or("collision has no observed live-play start after kickoff")?;
-                start = start.max(first_touch);
+                start = start.max(kickoff.number("live_action_start_time")?);
             }
         }
         if start > time || end < time {

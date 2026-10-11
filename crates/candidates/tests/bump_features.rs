@@ -258,6 +258,79 @@ fn sampling_does_not_cross_a_goal_or_use_the_match_countdown() {
 }
 
 #[test]
+fn kickoff_collisions_use_the_observed_live_action_start() {
+    let mut document = fixture();
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(event(
+            "kickoff:0",
+            "kickoff",
+            json!({"start_time": 0.0, "live_action_start_time": 0.25, "first_touch_time": 1.0}),
+        ));
+    let batch = calculate(document.clone(), None).unwrap();
+    assert_eq!(batch.rows.len(), 2);
+    assert_eq!(batch.rows[0].samples.play_start, 0.25);
+    assert_eq!(batch.rows[0].samples.p.before_frame, Some(3));
+    assert_eq!(batch.rows[0].samples.p.after_frame, Some(8));
+    assert_eq!(batch.rows[0].samples.p.status, SamplingStatus::Complete);
+    let kickoff = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    kickoff["payload"]["payload"]["first_touch_time"] = Value::Null;
+    assert!(calculate(document, None).is_ok());
+}
+
+#[test]
+fn kickoff_sampling_excludes_countdown_frames_and_requires_a_start_time() {
+    let mut document = fixture();
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(event(
+            "kickoff:0",
+            "kickoff",
+            json!({"start_time": 0.0, "live_action_start_time": 0.375, "first_touch_time": 1.0}),
+        ));
+    let batch = calculate(document.clone(), None).unwrap();
+    assert_eq!(batch.rows[0].samples.p.status, SamplingStatus::PlayBoundary);
+    assert_eq!(batch.rows[0].samples.p.after_frame, None);
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.last_mut().unwrap()["payload"]["payload"]["live_action_start_time"] = json!(0.625);
+    assert!(
+        calculate(document.clone(), None)
+            .unwrap_err()
+            .contains("outside its observed live-play segment")
+    );
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.last_mut().unwrap()["payload"]["payload"]["live_action_start_time"] = Value::Null;
+    assert!(
+        calculate(document.clone(), None)
+            .unwrap_err()
+            .contains("invalid live_action_start_time")
+    );
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["payload"]["payload"]
+        .as_object_mut()
+        .unwrap()
+        .remove("live_action_start_time");
+    assert!(
+        calculate(document, None)
+            .unwrap_err()
+            .contains("missing live_action_start_time")
+    );
+}
+
+#[test]
 fn undefined_horizontal_basis_preserves_vertical_measurements() {
     let mut document = fixture();
     document["outputs"]["replay_data"]["frame_data"]["players"][1][1]["frames"][3]["Data"]["rigid_body"]
