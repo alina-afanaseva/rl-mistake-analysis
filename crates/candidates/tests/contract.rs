@@ -1,4 +1,5 @@
 use rl_mistake_analysis_candidates::{CandidateBatch, MistakeKind, ReplayFacts};
+use serde_json::json;
 
 fn facts() -> ReplayFacts {
     serde_json::from_str(include_str!("../../../examples/bump.json")).unwrap()
@@ -29,6 +30,81 @@ fn events_only_candidates_include_both_subjects_with_eight_incident_features() {
     );
 }
 
+fn repeat(replay: &mut ReplayFacts, frame: u64, reversed: bool) {
+    let mut event = replay.events[0].clone();
+    event.meta.id = format!("bump:{frame}");
+    let bump = &mut event.payload["payload"];
+    bump["frame"] = json!(frame);
+    bump["time"] = json!(10.0 + (frame - 42) as f64 / 30.0);
+    if reversed {
+        for (left, right) in [
+            ("initiator", "victim"),
+            ("initiator_position", "victim_position"),
+        ] {
+            let value = bump[left].clone();
+            bump[left] = bump[right].clone();
+            bump[right] = value;
+        }
+    }
+    replay.events.push(event);
+}
+
+#[test]
+fn role_reversal_keeps_one_contact_with_both_subjects_and_original_identity() {
+    let kind = MistakeKind::BumpingTeammate;
+    let original = kind.candidates(&facts()).unwrap();
+    let mut replay = facts();
+    repeat(&mut replay, 43, true);
+    replay.events.reverse();
+    let batch = kind.candidates(&replay).unwrap();
+    assert_eq!(
+        serde_json::to_value(batch).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+    assert_eq!(
+        kind.initiator_candidates(&replay).unwrap().candidates.len(),
+        1
+    );
+}
+
+#[test]
+fn repeat_window_is_inclusive_and_preserves_later_collisions_and_other_pairs() {
+    let kind = MistakeKind::BumpingTeammate;
+    for reversed in [false, true] {
+        let mut replay = facts();
+        repeat(&mut replay, 52, reversed);
+        assert_eq!(kind.candidates(&replay).unwrap().candidates.len(), 2);
+        repeat(&mut replay, 63, reversed);
+        let batch = kind.candidates(&replay).unwrap();
+        assert_eq!(batch.candidates.len(), 4);
+        assert_eq!(batch.candidates[2].frame, 63);
+    }
+    let mut replay = facts();
+    repeat(&mut replay, 43, false);
+    replay.events[1].payload["payload"]["victim"] = json!({"Steam": 3});
+    assert_eq!(kind.candidates(&replay).unwrap().candidates.len(), 4);
+}
+
+#[test]
+fn suppressed_reversals_extend_the_contact_repeat_window() {
+    let mut replay = facts();
+    repeat(&mut replay, 43, true);
+    repeat(&mut replay, 53, false);
+    repeat(&mut replay, 64, true);
+    let batch = MistakeKind::BumpingTeammate.candidates(&replay).unwrap();
+    assert_eq!(batch.candidates.len(), 4);
+    assert_eq!(batch.candidates[0].frame, 42);
+    assert_eq!(batch.candidates[2].frame, 64);
+}
+
+#[test]
+fn suppressed_contacts_still_require_valid_measurements() {
+    let mut replay = facts();
+    repeat(&mut replay, 43, true);
+    replay.events[1].payload["payload"]["confidence"] = json!("invalid");
+    assert!(MistakeKind::BumpingTeammate.candidates(&replay).is_err());
+}
+
 #[test]
 fn candidate_entry_point_rejects_failed_suppliers_and_duplicate_events() {
     let kind = MistakeKind::BumpingTeammate;
@@ -37,6 +113,8 @@ fn candidate_entry_point_rejects_failed_suppliers_and_duplicate_events() {
     assert!(kind.candidates(&replay).is_err());
     replay.status = "ok".into();
     replay.events.push(replay.events[0].clone());
+    assert!(kind.candidates(&replay).is_err());
+    replay.events[1].meta.id = "different-event-id".into();
     assert!(kind.candidates(&replay).is_err());
 }
 

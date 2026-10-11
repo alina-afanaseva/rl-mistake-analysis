@@ -179,6 +179,75 @@ fn independently_samples_and_describes_both_participants() {
 }
 
 #[test]
+fn role_reversal_does_not_duplicate_or_change_subject_measurements() {
+    let original = calculate(fixture(), None).unwrap();
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    let mut reversed = events[0].clone();
+    reversed["meta"]["id"] = json!("bump:5");
+    let bump = &mut reversed["payload"]["payload"];
+    bump["frame"] = json!(5);
+    bump["time"] = json!(0.625);
+    bump["initiator"] = json!({"Steam": 2});
+    bump["victim"] = json!({"Steam": 1});
+    events.insert(0, reversed);
+    let batch = calculate(document.clone(), None).unwrap();
+    assert_eq!(
+        serde_json::to_value(&batch).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+    let victim = calculate(document.clone(), Some(&json!({"Steam": 2}))).unwrap();
+    assert_eq!(victim.rows.len(), 1);
+    assert_eq!(victim.rows[0].source_event_id, "bump:4");
+    document["outputs"]["events"]["events"]["events"][0]["payload"]["payload"]["time"] = json!(0.6);
+    assert!(calculate(document, None).is_err());
+}
+
+#[test]
+fn later_contact_history_uses_the_retained_contact_time() {
+    let mut document = fixture();
+    let frame_data = &mut document["outputs"]["replay_data"]["frame_data"];
+    *frame_data["metadata_frames"].as_array_mut().unwrap() = (0..24)
+        .map(|frame| json!({"time": frame as f64 / 8.0}))
+        .collect();
+    for player in frame_data["players"].as_array_mut().unwrap() {
+        let frames = player[1]["frames"].as_array_mut().unwrap();
+        frames.resize(24, frames.last().unwrap().clone());
+    }
+    let ball = frame_data["ball_data"]["frames"].as_array_mut().unwrap();
+    ball.resize(24, ball.last().unwrap().clone());
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.retain(|event| event["meta"]["stream"] != "goal_context");
+    events[1]["payload"]["payload"]["end_time"] = json!(2.875);
+    let mut reversed = events[0].clone();
+    reversed["meta"]["id"] = json!("bump:5");
+    reversed["payload"]["payload"]["frame"] = json!(5);
+    reversed["payload"]["payload"]["time"] = json!(0.625);
+    reversed["payload"]["payload"]["initiator"] = json!({"Steam": 2});
+    reversed["payload"]["payload"]["victim"] = json!({"Steam": 1});
+    let mut later = events[0].clone();
+    later["meta"]["id"] = json!("bump:16");
+    later["payload"]["payload"]["frame"] = json!(16);
+    later["payload"]["payload"]["time"] = json!(2.0);
+    events.extend([reversed, later]);
+    let batch = calculate(document, None).unwrap();
+    assert_eq!(batch.rows.len(), 4);
+    for row in &batch.rows[2..] {
+        assert_eq!(row.source_event_id, "bump:16");
+        for participant in ["p", "q"] {
+            assert_eq!(
+                row.features[&format!("{participant}_previous_bump_age_s")],
+                Some(Measurement::Float(1.5))
+            );
+        }
+    }
+}
+
+#[test]
 fn outcomes_use_each_players_next_touch_and_handle_simultaneous_touches() {
     let mut document = fixture();
     document["outputs"]["events"]["events"]["events"]

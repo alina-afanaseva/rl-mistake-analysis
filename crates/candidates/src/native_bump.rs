@@ -1,4 +1,5 @@
 use crate::annotations::IncidentAnchor;
+use crate::bump_contacts::{Contact, unique_contact_ids};
 use crate::input::ReplayFacts;
 use crate::kind::Candidate;
 use serde::Deserialize;
@@ -138,12 +139,27 @@ pub(crate) fn candidates(replay: &ReplayFacts) -> Result<Vec<Candidate>, String>
             features: features.into_iter().map(Some).collect(),
             evidence,
         };
-        candidates.push(candidate.clone());
-        candidates.push(Candidate {
-            player_id: bump.victim,
-            ..candidate
-        });
+        candidates.push(candidate);
     }
+    let selected = unique_contact_ids(candidates.iter().map(|candidate| Contact {
+        id: &candidate.source_event_ids[0],
+        frame: candidate.frame,
+        initiator: &candidate.player_id,
+        victim: &candidate.evidence["victim"],
+    }))?;
+    let mut candidates: Vec<_> = candidates
+        .into_iter()
+        .filter(|candidate| selected.contains(&candidate.source_event_ids[0]))
+        .flat_map(|candidate| {
+            [
+                candidate.clone(),
+                Candidate {
+                    player_id: candidate.evidence["victim"].clone(),
+                    ..candidate
+                },
+            ]
+        })
+        .collect();
     candidates.sort_by(|left, right| {
         left.frame
             .cmp(&right.frame)

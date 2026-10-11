@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -163,11 +164,26 @@ def model(path, names):
     )
 
 
-def test_same_rows_are_reviewed_prepared_and_scored(engine, tmp_path, monkeypatch):
+@pytest.mark.parametrize("reverse_repeat", [False, True])
+def test_same_rows_are_reviewed_prepared_and_scored(
+    engine, tmp_path, monkeypatch, reverse_repeat
+):
     monkeypatch.syspath_prepend(str(ROOT.parent / "event-review"))
     from store import Store
 
     document = analysis()
+    if reverse_repeat:
+        events = document["outputs"]["events"]["events"]["events"]
+        repeated = deepcopy(events[0])
+        repeated["meta"]["id"] = "bump:3"
+        bump = repeated["payload"]["payload"]
+        bump["frame"], bump["time"] = 3, 0.375
+        for left, right in (
+            ("initiator", "victim"),
+            ("initiator_position", "victim_position"),
+        ):
+            bump[left], bump[right] = bump[right], bump[left]
+        events.insert(0, repeated)
     events = {
         key: document[key]
         for key in ("name", "schema_version", "status", "revision", "replay_sha256")

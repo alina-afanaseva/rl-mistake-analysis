@@ -8,6 +8,7 @@ pub use input::ReplayAnalysis;
 pub use sampling::{FeatureSampling, ParticipantSamples, SamplingMethod, SamplingStatus};
 pub use schema::{DataType, FeatureDefinition, definitions};
 
+use crate::bump_contacts::{Contact, unique_contact_ids};
 use input::{Body, Event, PadEventKind, PlayerData, PlayerFrame, Vector};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -235,13 +236,8 @@ pub fn extract(
         }
         streams.entry(&event.meta.stream).or_default().push(event);
     }
-    let context = Context { analysis, streams };
-    if let Some(subject) = subject {
-        context.player(subject)?;
-    }
-    let feature_definitions = definitions();
-    let mut rows = Vec::new();
-    for bump in context.events("bump") {
+    let mut contacts = Vec::new();
+    for bump in streams.get("bump").into_iter().flatten() {
         let initiator = bump.participant("initiator")?;
         let victim = bump.participant("victim")?;
         let team = bump.boolean("initiator_is_team_0")?;
@@ -270,6 +266,34 @@ pub fn extract(
                 bump.meta.id
             ));
         }
+        contacts.push(Contact {
+            id: &bump.meta.id,
+            frame: frame as u64,
+            initiator,
+            victim,
+        });
+    }
+    let selected = unique_contact_ids(contacts.into_iter())?;
+    if let Some(bumps) = streams.get_mut("bump") {
+        bumps.retain(|bump| {
+            bump.boolean("is_team_bump") == Ok(false) || selected.contains(&bump.meta.id)
+        });
+    }
+    let context = Context { analysis, streams };
+    if let Some(subject) = subject {
+        context.player(subject)?;
+    }
+    let feature_definitions = definitions();
+    let mut rows = Vec::new();
+    for bump in context.events("bump") {
+        if !bump.boolean("is_team_bump")? {
+            continue;
+        }
+        let initiator = bump.participant("initiator")?;
+        let victim = bump.participant("victim")?;
+        let team = bump.boolean("initiator_is_team_0")?;
+        let frame = bump.frame("frame")?;
+        let time = bump.number("time")?;
         for (player, teammate) in [(initiator, victim), (victim, initiator)] {
             if subject.is_some_and(|subject| subject != player) {
                 continue;
