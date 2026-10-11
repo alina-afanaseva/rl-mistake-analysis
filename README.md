@@ -2,6 +2,8 @@
 
 rl-mistake-analysis helps replay-analysis applications identify potential player mistakes in Rocket League and score them with trained models. It also turns human-reviewed incidents into training data, using the same feature calculations that supply the models during inference.
 
+Model releases and evaluation results are available on [Hugging Face](https://huggingface.co/alina-afanaseva/rl-mistake-analysis-models).
+
 A **candidate** is an incident worth reviewing. **Features** are measurements describing that incident. A **model** uses those measurements to estimate whether the incident is a mistake. Each mistake kind defines its candidates and features; different kinds can use different models.
 
 [subtr-actor](https://github.com/rlrml/subtr-actor) supplies gameplay events and replay context. Downstream applications display incidents, collect reviews, and use predictions. Implemented mistake kinds: `bumping_teammate`.
