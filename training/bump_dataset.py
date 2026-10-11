@@ -12,6 +12,16 @@ import pyarrow.parquet as pq
 METADATA_KEY = b"rl_mistake_analysis_features"
 IDENTITY_FIELDS = ("replay_sha256", "frame", "initiator", "victim", "player_id")
 DATA_TYPES = {"boolean": pa.bool_(), "f32": pa.float32(), "u32": pa.uint32()}
+CONTEXT_SCHEMA = "bumping_teammate.context.v1"
+
+
+def supports_schema(schema):
+    """Named v1 subsets share the base context measurements."""
+    return isinstance(schema, str) and (
+        schema == CONTEXT_SCHEMA
+        or re.fullmatch(rf"{re.escape(CONTEXT_SCHEMA)}\.[A-Za-z0-9_]+\.v1", schema)
+        is not None
+    )
 
 
 def identity(record):
@@ -43,7 +53,7 @@ def load(path, *, labeled=False):
     if (
         contract["schema_version"] != 1
         or contract["kind"] != "bumping_teammate"
-        or contract["input_schema"] != "bumping_teammate.context.v1"
+        or not supports_schema(contract["input_schema"])
         or not table.num_rows
     ):
         raise ValueError("Unsupported teammate-bump context contract or empty table")

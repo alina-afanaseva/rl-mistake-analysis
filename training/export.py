@@ -9,7 +9,8 @@ from pathlib import Path
 
 import onnx
 
-from training.dataset import load
+from training.bump_dataset import supports_schema
+from training.dataset import load, select_features
 
 
 def tensor_locations(message):
@@ -51,8 +52,12 @@ def model_entry(
     keep_threshold,
     source_revision,
     status,
+    feature_names=None,
+    input_schema=None,
 ):
     table, contract = load(training_table)
+    if feature_names is not None or input_schema is not None:
+        contract = select_features(contract, feature_names, input_schema)
     if (
         not isinstance(version, str)
         or not version.strip()
@@ -105,7 +110,7 @@ def model_entry(
         },
         "files": files,
     }
-    if contract["input_schema"] == "bumping_teammate.context.v1":
+    if supports_schema(contract["input_schema"]):
         entry["sampling"] = contract["sampling"]
     return entry
 

@@ -108,7 +108,10 @@ impl Manifest {
 impl ModelEntry {
     pub fn validate(&self) -> Result<(), String> {
         match self.input_schema.as_str() {
-            rl_mistake_analysis_candidates::bump_features::SCHEMA if self.sampling.is_none() => {
+            schema
+                if rl_mistake_analysis_candidates::bump_features::supports_schema(schema)
+                    && self.sampling.is_none() =>
+            {
                 return Err("context model must declare its feature sampling".into());
             }
             "bumping_teammate.native.v1" if self.sampling.is_some() => {

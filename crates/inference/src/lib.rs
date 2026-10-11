@@ -7,7 +7,7 @@ use ort::{
     session::Session,
     value::{Tensor, TensorElementType, ValueType},
 };
-use rl_mistake_analysis_candidates::bump_features::{DataType, FeatureBatch, Measurement};
+use rl_mistake_analysis_candidates::bump_features::{self, DataType, FeatureBatch, Measurement};
 use rl_mistake_analysis_candidates::{Candidate, CandidateBatch, MistakeKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -152,20 +152,16 @@ impl Model {
     ) -> Result<PredictionBatch, String> {
         batch.validate()?;
         if batch.kind != self.entry.kind
-            || features.input_schema != self.entry.input_schema
-            || features.feature_definitions
-                != rl_mistake_analysis_candidates::bump_features::definitions()
-            || features
-                .feature_definitions
-                .iter()
-                .map(|definition| &definition.name)
-                .ne(&self.entry.feature_names)
+            || !bump_features::supports_schema(&self.entry.input_schema)
+            || features.input_schema != bump_features::SCHEMA
+            || features.feature_definitions != bump_features::definitions()
             || Some(features.sampling) != self.entry.sampling
             || features.engine_revision != batch.engine_revision
             || features.replay_sha256 != batch.replay_sha256
         {
             return Err("model/input feature contract mismatch".into());
         }
+        let selected = bump_features::select_definitions(&self.entry.feature_names)?;
         let mut rows = HashMap::new();
         for row in features.rows {
             let key = (
@@ -197,8 +193,7 @@ impl Model {
             {
                 return Err("subject feature row disagrees with the candidate".into());
             }
-            let vector = features
-                .feature_definitions
+            let vector = selected
                 .iter()
                 .map(|definition| {
                     match row

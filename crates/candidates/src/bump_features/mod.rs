@@ -17,6 +17,40 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 pub const SCHEMA: &str = "bumping_teammate.context.v1";
 const BOOST_RAW_MAX: f64 = u8::MAX as f64;
 
+/// Named v1 subsets use the same measurements as the base context contract.
+pub fn supports_schema(schema: &str) -> bool {
+    schema == SCHEMA
+        || schema
+            .strip_prefix(SCHEMA)
+            .and_then(|suffix| suffix.strip_prefix('.'))
+            .and_then(|suffix| suffix.strip_suffix(".v1"))
+            .is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            })
+}
+
+/// Resolve unique model inputs in their declared order.
+pub fn select_definitions(names: &[String]) -> Result<Vec<FeatureDefinition>, String> {
+    if names.is_empty() {
+        return Err("context models require at least one feature".into());
+    }
+    let mut available: HashMap<_, _> = definitions()
+        .into_iter()
+        .map(|definition| (definition.name.clone(), definition))
+        .collect();
+    names
+        .iter()
+        .map(|name| {
+            available
+                .remove(name)
+                .ok_or_else(|| format!("unknown or duplicate context feature: {name}"))
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Measurement {

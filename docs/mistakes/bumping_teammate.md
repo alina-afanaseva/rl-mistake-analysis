@@ -26,6 +26,14 @@ python -m training.bump_features data/replay_analysis artifacts/team_bump_featur
 
 `--replay-ids` selects a JSON array of replay filename stems; omitting it selects every `.json` file in the supplied directory. The exporter validates all selected inputs before replacing the output. Each unique replay checksum contributes one set of rows. Identical feature batches under different filenames retain all replay IDs and source paths as aliases in the metadata; conflicting batches are errors. This table carries incident and subject identities but no labels. `prepare` retains the eight-feature native contract. `score` selects the extractor specified by the chosen model's input schema and sampling contract.
 
+## Model-defined feature subsets
+
+Context models declare their ordered inputs in the manifest's `feature_names` list. The extractor supplies its full feature catalog; inference selects only the declared names, in that order.
+
+The base schema `bumping_teammate.context.v1` supports any nonempty subset of known, unique features. Named subsets can use `bumping_teammate.context.v1.NAME.v1`, where `NAME` contains letters, digits, or underscores. These identifiers retain the base measurements and sampling rules. The selected release uses `bumping_teammate.context.v1.expanded90.v1`.
+
+Adding measurements to the catalog preserves existing models' selected inputs. Changing a measurement's meaning or units requires a new base contract version. Unknown names, duplicates, unsupported versions, and mismatched sampling are errors.
+
 ## Review and score both participants
 
 Create eight-feature review candidates from the events output:

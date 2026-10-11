@@ -6,6 +6,42 @@ fn facts() -> ReplayFacts {
 }
 
 #[test]
+fn context_models_select_unique_known_features_in_manifest_order() {
+    use rl_mistake_analysis_candidates::bump_features;
+
+    let kind = MistakeKind::BumpingTeammate;
+    let names = vec!["p_boost_before_pct".into(), "p_is_initiator".into()];
+    for schema in [
+        bump_features::SCHEMA,
+        "bumping_teammate.context.v1.expanded90.v1",
+        "bumping_teammate.context.v1.custom.v1",
+    ] {
+        kind.validate_contract(schema, &names).unwrap();
+    }
+    let selected = bump_features::select_definitions(&names).unwrap();
+    assert_eq!(selected[0].name, names[0]);
+    assert_eq!(selected[1].name, names[1]);
+    for invalid in [
+        vec![],
+        vec!["unknown_feature".into()],
+        vec!["p_is_initiator".into(), "p_is_initiator".into()],
+    ] {
+        assert!(
+            kind.validate_contract(bump_features::SCHEMA, &invalid)
+                .is_err()
+        );
+    }
+    for schema in [
+        "bumping_teammate.context.v2",
+        "bumping_teammate.context.v1.custom.v2",
+        "bumping_teammate.context.v1..v1",
+        "bumping_teammate.context.v1.custom.extra.v1",
+    ] {
+        assert!(kind.validate_contract(schema, &names).is_err());
+    }
+}
+
+#[test]
 fn events_only_candidates_include_both_subjects_with_eight_incident_features() {
     let kind = MistakeKind::BumpingTeammate;
     let batch = kind.candidates(&facts()).unwrap();

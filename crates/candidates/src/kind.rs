@@ -41,10 +41,10 @@ impl MistakeKind {
     pub fn validate_contract(self, schema: &str, feature_names: &[String]) -> Result<(), String> {
         let compatible = match schema {
             native_bump::SCHEMA => feature_names == self.feature_names(),
-            bump_features::SCHEMA => bump_features::definitions()
-                .iter()
-                .map(|definition| &definition.name)
-                .eq(feature_names),
+            schema if bump_features::supports_schema(schema) => {
+                bump_features::select_definitions(feature_names)?;
+                true
+            }
             _ => false,
         };
         if !compatible {

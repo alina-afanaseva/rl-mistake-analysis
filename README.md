@@ -66,6 +66,8 @@ let predictions = model.score(candidates)?;
 
 Load once and reuse the session. Results contain probabilities, threshold decisions, and model identity. Computation runs inside your application through ONNX Runtime. The application controls model downloads, activation, concurrency, and prediction storage.
 
+Context models use player-specific measurements from a combined replay analysis. Extract them with the model's sampling configuration, then call `model.score_context(candidates, features)`. The manifest's `feature_names` list selects inputs in model order; the extractor can supply additional features. See [context scoring](docs/mistakes/bumping_teammate.md#model-defined-feature-subsets).
+
 ### Process replay files from the terminal
 
 The CLI is an executable for offline work: extract events from a recording, inspect candidates, prepare training tables from reviews, or test a model. Install it with Cargo using the same ONNX Runtime setup as inference:

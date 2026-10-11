@@ -93,7 +93,7 @@ def load(path):
 
 
 def arrays(table, contract):
-    if contract["input_schema"] == "bumping_teammate.context.v1":
+    if bump_dataset.supports_schema(contract["input_schema"]):
         return bump_dataset.arrays(table, contract)
     features = np.column_stack(
         [table[name].to_numpy() for name in contract["feature_names"]]
@@ -108,3 +108,29 @@ def arrays(table, contract):
         table["label"].to_numpy(),
         table["replay_sha256"].to_numpy(),
     )
+
+
+def select_features(contract, names, input_schema):
+    """Select ordered context inputs without changing their definitions or sampling."""
+    if not bump_dataset.supports_schema(
+        contract["input_schema"]
+    ) or not bump_dataset.supports_schema(input_schema):
+        raise ValueError("Feature selection requires supported context schemas")
+    available = {
+        feature["name"]: feature for feature in contract["feature_definitions"]
+    }
+    if (
+        not isinstance(names, list)
+        or not names
+        or any(not isinstance(name, str) or name not in available for name in names)
+        or len(set(names)) != len(names)
+    ):
+        raise ValueError(
+            "Selected features must be unique names in the source contract"
+        )
+    return {
+        **contract,
+        "input_schema": input_schema,
+        "feature_names": names,
+        "feature_definitions": [available[name] for name in names],
+    }

@@ -123,7 +123,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let mut model = Model::load(Path::new(directory), name, version)?;
             let kind = MistakeKind::parse(name)?;
             let predictions = match model.metadata().input_schema.as_str() {
-                bump_features::SCHEMA => {
+                schema if bump_features::supports_schema(schema) => {
                     let sampling = model
                         .metadata()
                         .sampling

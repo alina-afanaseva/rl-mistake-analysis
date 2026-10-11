@@ -142,7 +142,7 @@ ONNX contains the classifier's operations, learned parameters, and exported prep
 | `provenance` | Training `source_revision` and supplier `engine_revisions` |
 | `files` | Required artifacts, each with `path` and integrity checksum `sha256` |
 
-Several releases can coexist. Each must declare its graph, evaluation report, and any external weight files. Consumers download the selected release's files; checksums verify them. Feature compatibility depends on the contract, rather than an exact supplier revision. Change the contract identifier for incompatible changes to feature meaning, units, or order.
+Several releases can coexist. Each must declare its graph, evaluation report, and any external weight files. Consumers download the selected release's files; checksums verify them. Feature compatibility depends on the contract, rather than an exact supplier revision. Context models may select any nonempty subset of known features in their declared `feature_names` order. Adding measurements to the extractor preserves existing selections. Change the base contract version for incompatible changes to feature meaning or units. See [model-defined feature subsets](mistakes/bumping_teammate.md#model-defined-feature-subsets).
 
 The ONNX interface accepts one float32 table `[N, F]` and returns probabilities `[N, 1]`: `N` incidents, `F` ordered features, one probability in `[0, 1]` per incident. The incident count is dynamic.
 

@@ -12,7 +12,7 @@ from onnx import TensorProto, helper
 
 from training.bump_dataset import prepare
 from training.bump_features import compute
-from training.dataset import arrays, load
+from training.dataset import arrays, load, select_features
 from training.export import model_entry, write_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,8 +165,12 @@ def model(path, names):
 
 
 @pytest.mark.parametrize("reverse_repeat", [False, True])
+@pytest.mark.parametrize(
+    "subset_schema",
+    [None, "bumping_teammate.context.v1", "bumping_teammate.context.v1.expanded90.v1"],
+)
 def test_same_rows_are_reviewed_prepared_and_scored(
-    engine, tmp_path, monkeypatch, reverse_repeat
+    engine, tmp_path, monkeypatch, reverse_repeat, subset_schema
 ):
     monkeypatch.syspath_prepend(str(ROOT.parent / "event-review"))
     from store import Store
@@ -245,6 +249,11 @@ def test_same_rows_are_reviewed_prepared_and_scored(
         )
         assert y[index] == int(candidate["player_id"] == {"Steam": "2"})
     assert groups.tolist() == ["a" * 64] * 2
+    selection = {}
+    if subset_schema is not None:
+        names = ["p_velocity_delta_up", "p_is_initiator"]
+        contract = select_features(contract, names, subset_schema)
+        selection = {"feature_names": names, "input_schema": subset_schema}
     model(tmp_path / "model.onnx", contract["feature_names"])
     (tmp_path / "evaluation.json").write_text("{}")
     entry = model_entry(
@@ -256,6 +265,7 @@ def test_same_rows_are_reviewed_prepared_and_scored(
         keep_threshold=0.5,
         source_revision="participant-test",
         status="experimental",
+        **selection,
     )
     assert entry["sampling"] == json.loads(SAMPLING.read_text())
     write_manifest(tmp_path, "test", [entry])
@@ -266,7 +276,7 @@ def test_same_rows_are_reviewed_prepared_and_scored(
     assert predictions["input_schema"] == batch["input_schema"]
     assert predictions["feature_names"] == batch["feature_names"]
     assert predictions["model_input_schema"] == contract["input_schema"]
-    assert len(predictions["model_feature_names"]) == 105
+    assert predictions["model_feature_names"] == contract["feature_names"]
     for prediction in predictions["predictions"]:
         candidate = prediction["candidate"]
         original = next(
