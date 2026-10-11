@@ -45,7 +45,7 @@ use rl_mistake_analysis_candidates::MistakeKind;
 let candidates = MistakeKind::BumpingTeammate.candidates(&replay_events)?;
 ```
 
-`replay_events` contains the supplier's events and recording identity, following [the input contract](docs/formats.md#replay-events). The result contains candidate incidents, their evidence, and features. Labels are supplied by human review.
+`replay_events` contains the supplier's events and recording identity, following [the input contract](docs/formats.md#replay-events). Each teammate bump produces a candidate for each participant, with their identity, the incident evidence, and eight shared incident features. Labels are supplied by human review.
 
 ### Score candidates with a model
 
@@ -57,18 +57,33 @@ cargo add rl-mistake-analysis-inference --git https://github.com/assembledev/rl-
 
 Install CPU ONNX Runtime 1.24+. Before building, set `ORT_LIB_PATH` to its library directory and `ORT_PREFER_DYNAMIC_LINK=1`. The runtime library must also be available to the operating system's dynamic loader when executing inference.
 
-Download a compatible model release and its `manifest.json` catalog into a local model directory. Load the selected kind and version, then score candidates:
+Download a compatible model release and its `manifest.json` catalog into a local model directory. For an eight-feature model with input schema `bumping_teammate.native.v1`, select initiator candidates before scoring:
 
 ```rust
+use rl_mistake_analysis_candidates::MistakeKind;
 use rl_mistake_analysis_inference::Model;
 
 let mut model = Model::load(model_directory, "bumping_teammate", model_version)?;
+let candidates = MistakeKind::BumpingTeammate.initiator_candidates(&replay_events)?;
 let predictions = model.score(candidates)?;
 ```
 
 Load once and reuse the session. Results contain probabilities, threshold decisions, and model identity. Computation runs inside your application through ONNX Runtime. The application controls model downloads, activation, concurrency, and prediction storage.
 
-Context models use player-specific measurements from a combined replay analysis. Extract them with the model's sampling configuration, then call `model.score_context(candidates, features)`. The manifest's `feature_names` list selects inputs in model order; the extractor can supply additional features. See [context scoring](docs/mistakes/bumping_teammate.md#model-defined-feature-subsets).
+Context models, including the published experimental `0.1.0` release, score both participants using player-specific measurements. Load the context model, obtain both candidates with `candidates()`, and extract measurements with the model's sampling configuration:
+
+```rust
+use rl_mistake_analysis_candidates::{MistakeKind, bump_features};
+use rl_mistake_analysis_inference::Model;
+
+let mut model = Model::load(model_directory, "bumping_teammate", model_version)?;
+let candidates = MistakeKind::BumpingTeammate.candidates(&replay_events)?;
+let sampling = model.metadata().sampling.ok_or("missing context sampling contract")?;
+let features = bump_features::extract(&combined_analysis, sampling, None)?;
+let predictions = model.score_context(candidates, features)?;
+```
+
+`combined_analysis` is a `bump_features::ReplayAnalysis` deserialized from an `events,replay_data` export of the same recording as `replay_events`. The manifest's `feature_names` list selects inputs in model order; the extractor can supply additional features. Use `initiator_candidates()` with `score()` for native models and `candidates()` with `score_context()` for context models. See [context scoring](docs/mistakes/bumping_teammate.md#model-defined-feature-subsets).
 
 ### Process replay files from the terminal
 

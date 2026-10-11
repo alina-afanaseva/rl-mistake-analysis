@@ -1,4 +1,4 @@
-"""Verify participant identities across review, training export, and inference."""
+"""Verify participant identities across public annotations, training, and inference."""
 
 import json
 import subprocess
@@ -114,11 +114,11 @@ def analysis():
     }
 
 
-def run(engine, *args, document):
+def run(engine, *args, document=None):
     return json.loads(
         subprocess.run(
             [str(engine), *map(str, args)],
-            input=json.dumps(document),
+            input=json.dumps(document) if document is not None else None,
             text=True,
             capture_output=True,
             check=True,
@@ -170,11 +170,8 @@ def model(path, names):
     [None, "bumping_teammate.context.v1", "bumping_teammate.context.v1.expanded90.v1"],
 )
 def test_same_rows_are_reviewed_prepared_and_scored(
-    engine, tmp_path, monkeypatch, reverse_repeat, subset_schema
+    engine, tmp_path, reverse_repeat, subset_schema
 ):
-    monkeypatch.syspath_prepend(str(ROOT.parent / "event-review"))
-    from store import Store
-
     document = analysis()
     if reverse_repeat:
         events = document["outputs"]["events"]["events"]["events"]
@@ -202,27 +199,35 @@ def test_same_rows_are_reviewed_prepared_and_scored(
     source.write_text(json.dumps(document))
     features = tmp_path / "features.parquet"
     compute([source], engine, SAMPLING, features)
-    store = Store(tmp_path / "review.sqlite3")
-    for index, candidate in enumerate(batch["candidates"]):
-        candidate["player_name"] = ("Alice", "Bob")[index]
-    store.import_document(
-        {
-            "format": "candidate_batch",
-            "document": batch,
-            "replay_id": "match",
-            "time_offset": 0,
-        }
-    )
-    for event in store.export()["events"]:
-        store.mutate(
+    reviews = tmp_path / "reviews.json"
+    reviews.write_text(
+        json.dumps(
             {
-                "action": "review_event",
-                "event_id": event["event_id"],
-                "label": int(event["player_id"] == {"Steam": "2"}),
+                "schema_version": 1,
+                "replays": [{"sha256": batch["replay_sha256"]}],
+                "annotations": [
+                    {
+                        "replay_sha256": batch["replay_sha256"],
+                        "kind": candidate["kind"],
+                        "frame": candidate["frame"],
+                        "initiator": candidate["evidence"]["initiator"],
+                        "victim": candidate["evidence"]["victim"],
+                        "player_id": candidate["player_id"],
+                        "raw_time": candidate["raw_time"],
+                        "evidence": candidate["evidence"],
+                        "label": int(candidate["player_id"] == {"Steam": "2"}),
+                        "engine_revision": batch["engine_revision"],
+                        "source_event_ids": candidate["source_event_ids"],
+                    }
+                    for candidate in reversed(batch["candidates"])
+                ],
             }
         )
-    reviews = tmp_path / "reviews.json"
-    reviews.write_text(json.dumps(store.export(batch["input_schema"])))
+    )
+    assert run(engine, "validate-annotations", reviews) == {
+        "replays": 1,
+        "annotations": 2,
+    }
     training = tmp_path / "training.parquet"
     assert prepare(features, reviews, training)["reviewed_rows"] == 2
     table, contract = load(training)
