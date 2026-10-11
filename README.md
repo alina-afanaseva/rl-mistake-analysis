@@ -146,7 +146,21 @@ X, y, replay_groups = arrays(table, contract)
 
 For the extracted 105-feature teammate-bump context table, use `training.bump_dataset` to join reviewed incidents to training features. Each reviewed incident identifies the player being judged. The shared `training.dataset` reader also accepts labeled context tables, preserving feature order and missing values. See [context training preparation](docs/mistakes/bumping_teammate.md#prepare-context-features-for-training). The native eight-feature and context contracts remain distinct.
 
-### Compare models
+### Train the selected model
+
+The [training recipe](training/configs/bumping_teammate_0.1.0.json) records the selected teammate-bump model's features, XGBoost settings, sampling method, and decision threshold. Prepare a labeled context table as described above, then create a JSON array of replay checksums to reserve for testing. Every row from those replays stays out of training.
+
+```sh
+python -m training.train_selected artifacts/team_bump_training.parquet \
+  data/held_out_replay_sha256.json artifacts/model-release \
+  --source-revision YOUR_CODE_REVISION
+```
+
+This command fits one XGBoost model with the selected settings, evaluates training and held-out predictions, and verifies ONNX probabilities on every row. Use a new output directory for each run. It saves a model catalog, ONNX model, evaluation report, native XGBoost model, split indices, and predictions. The ONNX model and report are stored under `models/bumping_teammate/0.1.0/`.
+
+The original reviewed dataset is not distributed. Reproducing the published results requires the same labels, row order, and held-out replays; training with your own data produces a new fitted model. The [Hugging Face model card](https://huggingface.co/alina-afanaseva/rl-mistake-analysis-models) contains the model comparisons and selection results.
+
+### Compare your own models
 
 `training.evaluation.evaluate_models` runs the same grid search, refit, prediction, and metrics for each `ModelSpec`. Supply training and held-out test data and a cross-validation strategy. Features pass directly to each estimator; the evaluator does not select columns, encode categories, or load feature files. Binary labels use `1` for a mistake and `0` for a non-mistake.
 
@@ -181,7 +195,7 @@ Each parameter combination records validation accuracy, balanced accuracy, preci
 
 Keep all examples from a replay together when creating the train/test partition, as well as within cross-validation. Test data must not be passed to an estimator's fit parameters. Every training, validation, and test partition must contain both classes for the reported metrics.
 
-Run `nix-shell` to activate the evaluation environment. Nix supplies scikit-learn and the native ONNX Runtime library. The shell installs CatBoost and Python ONNX Runtime in `.venv`. The `training` dependency group also supports environments managed entirely by uv: `uv sync --locked --group training`.
+Run `nix-shell` to activate the training environment. Nix supplies scikit-learn and the native ONNX Runtime library. The shell installs CatBoost, XGBoost, the ONNX converters, and Python ONNX Runtime in `.venv`. The `training` dependency group also supports environments managed entirely by uv: `uv sync --locked --group training`.
 
 ### Save evaluation results
 

@@ -28,7 +28,7 @@ python -m training.bump_features data/replay_analysis artifacts/team_bump_featur
 
 ## Model-defined feature subsets
 
-Context models declare their ordered inputs in the manifest's `feature_names` list. The extractor supplies its full feature catalog; inference selects only the declared names, in that order.
+Context models declare their ordered inputs in the manifest's `feature_names` list. The extractor supplies its full feature catalog; inference selects only the declared names, in that order. The selected-model training command makes the same selection from its [JSON recipe](../../training/configs/bumping_teammate_0.1.0.json) and copies the list into the exported manifest.
 
 The base schema `bumping_teammate.context.v1` supports any nonempty subset of known, unique features. Named subsets can use `bumping_teammate.context.v1.NAME.v1`, where `NAME` contains letters, digits, or underscores. These identifiers retain the base measurements and sampling rules. The selected release uses `bumping_teammate.context.v1.expanded90.v1`.
 
