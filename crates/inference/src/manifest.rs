@@ -24,6 +24,8 @@ pub struct ModelEntry {
     pub version: String,
     pub input_schema: String,
     pub feature_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<rl_mistake_analysis_candidates::bump_features::FeatureSampling>,
     pub runtime: String,
     pub model_file: String,
     pub evaluation_file: String,
@@ -105,6 +107,18 @@ impl Manifest {
 
 impl ModelEntry {
     pub fn validate(&self) -> Result<(), String> {
+        match self.input_schema.as_str() {
+            schema
+                if rl_mistake_analysis_candidates::bump_features::supports_schema(schema)
+                    && self.sampling.is_none() =>
+            {
+                return Err("context model must declare its feature sampling".into());
+            }
+            "bumping_teammate.native.v1" if self.sampling.is_some() => {
+                return Err("native model must omit context sampling".into());
+            }
+            _ => {}
+        }
         let mut names = HashSet::new();
         if [&self.kind, &self.version, &self.input_schema, &self.runtime]
             .iter()

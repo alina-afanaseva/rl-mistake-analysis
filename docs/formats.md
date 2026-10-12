@@ -4,12 +4,35 @@ These formats connect replay extraction, human review, training, and inference. 
 
 | Data | Format | Used for |
 | --- | --- | --- |
+| Selected replay outputs | JSON | Analysis timeline and structured frames for one recording |
 | Replay events | JSON | Input to candidate extraction |
 | Candidates | JSON | Incidents for review or scoring |
 | Human annotations | JSON | Reviewed incidents and recording references |
 | Training table | Parquet | Features and labels for model fitting |
 | Model catalog | `manifest.json` | Available releases and required artifacts |
 | Model | ONNX | Classifier computation and learned parameters |
+
+## Selected replay outputs
+
+`extract FILE.replay` exports one recording as one JSON document, with `events,replay_data` selected by default. `--outputs` accepts any comma-separated selection of the five output keys below. A selection computes only its requested outputs, with all selected collectors sharing one replay pass. Multiple recordings require separate extractions and separate JSON files.
+
+The document carries the same identity fields as the replay-events format below: `name`, `schema_version: 1`, `status`, `revision`, `replay_sha256`, and optional `rocket_league_id`. An `outputs` object contains exactly the selected payloads:
+
+| Output key | Payload |
+| --- | --- |
+| `events` | Full SubtrActor analysis event timeline: event records, lightweight frame context, replay metadata, summaries, and compressed numeric tracks, including observed boost amounts |
+| `replay_data` | Full SubtrActor structured replay: player and ball frame data, replay metadata, available inputs/camera state, and basic replay event streams |
+| `stats` | Accumulated statistics from the default modules, keyed by module name under `modules`, with `replay_meta` |
+| `stats_timeline` | Full SubtrActor statistics snapshots at each replay frame, with configuration, metadata, and events |
+| `features` | Numeric matrix as JSON rows under `matrix`, with SubtrActor's replay metadata and column headers under `metadata` |
+
+Payloads preserve the supplier's field names and structure. Analysis event records are at `outputs.events.events.events`; boost tracks are at `outputs.events.accumulation_tracks`; structured frame data is at `outputs.replay_data.frame_data`. Presence of a supplier field does not guarantee a measurement is available in every replay or frame.
+
+The feature matrix uses `NDArrayCollector<f32>`'s default feature adders: ball rigid body globally, and each player's rigid body, boost, and jump state. `metadata.column_headers` describes global and per-player columns; `metadata.replay_meta` defines the player order. Each matrix row stores the global columns followed by the player columns in that order. This supplier matrix is separate from the mistake model's feature contract. Statistics use the supplier's default modules.
+
+Candidate extraction and scoring accept this document when the `events` output is present, using its event records with the shared identity. An export without that output is rejected. The other selected payloads remain available for feature calculations that use additional context.
+
+`outputs` lists the five implemented output keys. Unknown, empty, and duplicate selections fail; they are never replaced with another output. The five forms correspond to SubtrActor's [documented primary output layers](https://github.com/rlrml/subtr-actor/blob/40ec533da4184e46418b742804818a326b50b489/src/lib.rs#L30).
 
 ## Replay events
 
@@ -29,18 +52,22 @@ Each event has a `meta` object and a `payload`. Inside `meta`, `stream` identifi
 
 ## Candidates
 
-Candidate extraction selects incidents worth reviewing and calculates model features. Results are grouped by recording and mistake kind into a **batch**.
+Candidate extraction selects incidents worth reviewing and records eight incident measurements. Results are grouped by recording and mistake kind into a **batch**. Subject-specific training and scoring features are computed separately.
 
 | Batch field | Meaning |
 | --- | --- |
 | `kind` | Mistake kind |
 | `input_schema` | Feature contract identifier |
-| `feature_names` | Ordered model input feature names |
+| `feature_names` | Ordered incident measurement names |
 | `engine_revision` | Supplier revision that produced the events |
 | `replay_sha256` | Checksum of the original recording bytes |
 | `candidates` | Selected incidents |
 
 Each candidate records its `kind`, original `frame` and `raw_time`, subject `player_id`, numeric `features`, original event `evidence`, and `source_event_ids`. Features follow the batch's declared order. Evidence preserves the supplier information needed to identify and inspect the incident.
+
+Each teammate collision produces two candidates with the same eight measurements, evidence, collision anchor, and source event IDs. Their `player_id` values distinguish the independent reviews. The incident measurements alone do not express either player's responsibility.
+
+Subject-specific scoring uses the separate context feature contract, including its sampling configuration and ordered typed feature definitions. Unavailable context measurements remain JSON `null`; boolean model inputs are `0` or `1`. Eight-feature models were trained to judge the initiator and cannot judge victims using the same incident vector.
 
 ## Human annotations
 
@@ -69,6 +96,7 @@ The `id` inside the `download` object is a Ballchasing identifier, not a filenam
 | `replay_sha256` | Checksum of a recording listed in `replays` |
 | `kind` | Mistake kind |
 | Kind-specific identity fields | Fields required to identify an incident for this mistake kind |
+| `player_id` | Required identity of the judged participant |
 | `raw_time` | Original event time |
 | `evidence` | Original supplier event payload |
 | `label` | Human decision: `0` or `1` |
@@ -80,7 +108,9 @@ To retrieve an annotation's recording, find the entry in `replays` with the same
 
 The fetch tool saves the original binary file unchanged. Its local filename is the recording's 64-character checksum followed by `.replay`. Without a download reference, supply the original file with that name in the preparation directory.
 
-Within a recording, each kind defines the fields that identify an incident. Identity, time, and evidence must agree; duplicate incidents are errors. Preparation uses these identity fields to match labels with extracted incidents. Source event IDs are provenance, rather than the matching key.
+Within a recording, each kind defines the fields that identify an incident. The judged player, incident identity, time, and evidence must agree; duplicate reviews of the same participant in an incident are errors. Both participants can have separate decisions. Source event IDs are provenance, rather than the matching key.
+
+Native `prepare` accepts initiator labels only and rejects victim labels before reading recordings. Use `training.bump_dataset` to prepare player-specific context training data for either participant. An annotation without `player_id` is rejected; it is never assigned to the initiator implicitly.
 
 ## Training tables
 
@@ -103,6 +133,7 @@ ONNX contains the classifier's operations, learned parameters, and exported prep
 | `version` | Model release version |
 | `input_schema` | Required feature contract identifier |
 | `feature_names` | Required feature names in model input order |
+| `sampling` | Required context sampling configuration; omitted by native models |
 | `runtime` | `onnx` |
 | `model_file` | Relative path to the ONNX graph |
 | `evaluation_file` | Relative path to the evaluation report |
@@ -111,7 +142,7 @@ ONNX contains the classifier's operations, learned parameters, and exported prep
 | `provenance` | Training `source_revision` and supplier `engine_revisions` |
 | `files` | Required artifacts, each with `path` and integrity checksum `sha256` |
 
-Several releases can coexist. Each must declare its graph, evaluation report, and any external weight files. Consumers download the selected release's files; checksums verify them. Feature compatibility depends on the contract, rather than an exact supplier revision. Change the contract identifier for incompatible changes to feature meaning, units, or order.
+Several releases can coexist. Each must declare its graph, evaluation report, and any external weight files. Consumers download the selected release's files; checksums verify them. Feature compatibility depends on the contract, rather than an exact supplier revision. Context models may select any nonempty subset of known features in their declared `feature_names` order. Adding measurements to the extractor preserves existing selections. Change the base contract version for incompatible changes to feature meaning or units. See [model-defined feature subsets](mistakes/bumping_teammate.md#model-defined-feature-subsets).
 
 The ONNX interface accepts one float32 table `[N, F]` and returns probabilities `[N, 1]`: `N` incidents, `F` ordered features, one probability in `[0, 1]` per incident. The incident count is dynamic.
 
@@ -119,17 +150,6 @@ The ONNX interface accepts one float32 table `[N, F]` and returns probabilities 
 
 A prediction batch carries the recording and feature-contract metadata, a `model` object containing `kind`, `version`, and `sha256`, and a `predictions` list. Each prediction contains the original `candidate`, probability `score`, and boolean `keep`. An incident is retained when its score meets `keep_threshold`. Stored predictions identify the model that produced them.
 
-## Example: teammate bump
+## Mistake-specific contracts
 
-`bumping_teammate` identifies an incident by `frame`, `initiator`, and `victim` within a recording. The initiator is the subject; opponent contacts are excluded. The candidate library calculates the following eight model inputs, in the order defined by `bumping_teammate.native.v1`. These values appear in each candidate's `features`, become the numeric feature columns in prepared training tables, and are supplied to the model during inference:
-
-1. `contact_confidence`
-2. `closing_speed`
-3. `victim_impulse`
-4. `contact_distance`
-5. `strength`
-6. `initiator_height`
-7. `victim_height`
-8. `victim_distance_to_own_goal`
-
-The first five copy measurements from the supplier's bump event (`confidence` becomes `contact_confidence`). The last three are calculated by this project from the supplier's player positions and team information: two heights and the victim's distance to their own goal. The complete vector is this project's feature contract, rather than the raw supplier event.
+[Teammate bump](mistakes/bumping_teammate.md) documents incident identity, candidate model features, context feature extraction, and sampling.

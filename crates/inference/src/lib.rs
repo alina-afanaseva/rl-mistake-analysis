@@ -7,10 +7,11 @@ use ort::{
     session::Session,
     value::{Tensor, TensorElementType, ValueType},
 };
+use rl_mistake_analysis_candidates::bump_features::{self, DataType, FeatureBatch, Measurement};
 use rl_mistake_analysis_candidates::{Candidate, CandidateBatch, MistakeKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, collections::HashMap, path::Path};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelIdentity {
@@ -31,8 +32,12 @@ pub struct PredictionBatch {
     pub kind: String,
     pub input_schema: String,
     pub feature_names: Vec<String>,
+    pub model_input_schema: String,
+    pub model_feature_names: Vec<String>,
     pub engine_revision: String,
     pub replay_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<rl_mistake_analysis_candidates::bump_features::FeatureSampling>,
     pub model: ModelIdentity,
     pub predictions: Vec<Prediction>,
 }
@@ -113,19 +118,131 @@ impl Model {
         if batch.kind != self.entry.kind
             || batch.input_schema != self.entry.input_schema
             || batch.feature_names != self.entry.feature_names
+            || batch.sampling != self.entry.sampling
         {
             return Err("model/input feature contract mismatch".into());
         }
-        let count = batch.candidates.len();
-        let width = batch.feature_names.len();
-        let mut predictions = Vec::with_capacity(count);
-        if count != 0 {
-            let features: Vec<f32> = batch
+        if self.entry.input_schema == "bumping_teammate.native.v1"
+            && batch
                 .candidates
                 .iter()
-                .flat_map(|candidate| candidate.features.iter().map(|value| *value as f32))
-                .collect();
-            if features.iter().any(|value| !value.is_finite()) {
+                .any(|candidate| candidate.evidence.get("initiator") != Some(&candidate.player_id))
+        {
+            return Err("eight-feature models score only the initiator; use a subject-specific model for victims".into());
+        }
+        let inputs = batch
+            .candidates
+            .iter()
+            .map(|candidate| {
+                candidate
+                    .features
+                    .iter()
+                    .map(|value| value.unwrap() as f32)
+                    .collect()
+            })
+            .collect();
+        self.score_features(batch, inputs)
+    }
+
+    /// Join training measurements to eight-feature candidates by event and player.
+    pub fn score_context(
+        &mut self,
+        batch: CandidateBatch,
+        features: FeatureBatch,
+    ) -> Result<PredictionBatch, String> {
+        batch.validate()?;
+        if batch.kind != self.entry.kind
+            || !bump_features::supports_schema(&self.entry.input_schema)
+            || features.input_schema != bump_features::SCHEMA
+            || features.feature_definitions != bump_features::definitions()
+            || Some(features.sampling) != self.entry.sampling
+            || features.engine_revision != batch.engine_revision
+            || features.replay_sha256 != batch.replay_sha256
+        {
+            return Err("model/input feature contract mismatch".into());
+        }
+        let selected = bump_features::select_definitions(&self.entry.feature_names)?;
+        let mut rows = HashMap::new();
+        for row in features.rows {
+            let key = (
+                row.source_event_id.clone(),
+                serde_json::to_string(&row.player_id).map_err(|error| error.to_string())?,
+            );
+            if rows.insert(key, row).is_some() {
+                return Err("duplicate subject feature row".into());
+            }
+        }
+        let mut inputs = Vec::with_capacity(batch.candidates.len());
+        for candidate in &batch.candidates {
+            if candidate.source_event_ids.len() != 1 {
+                return Err("context scoring requires one source collision per candidate".into());
+            }
+            let key = (
+                candidate.source_event_ids[0].clone(),
+                serde_json::to_string(&candidate.player_id).map_err(|error| error.to_string())?,
+            );
+            let row = rows
+                .remove(&key)
+                .ok_or("candidate has no subject feature row")?;
+            if row.frame as u64 != candidate.frame
+                || row.raw_time != candidate.raw_time
+                || candidate.evidence.get("initiator") != Some(&row.initiator)
+                || candidate.evidence.get("victim") != Some(&row.victim)
+                || row.features.get("p_is_initiator")
+                    != Some(&Some(Measurement::Boolean(row.player_id == row.initiator)))
+            {
+                return Err("subject feature row disagrees with the candidate".into());
+            }
+            let vector = selected
+                .iter()
+                .map(|definition| {
+                    match row
+                        .features
+                        .get(&definition.name)
+                        .ok_or("missing model measurement")?
+                    {
+                        None if definition.nullable => Ok(f32::NAN),
+                        Some(Measurement::Boolean(value))
+                            if definition.data_type == DataType::Boolean =>
+                        {
+                            Ok(f32::from(u8::from(*value)))
+                        }
+                        Some(Measurement::Count(value))
+                            if definition.data_type == DataType::U32 =>
+                        {
+                            Ok(*value as f32)
+                        }
+                        Some(Measurement::Float(value))
+                            if definition.data_type == DataType::F32 && value.is_finite() =>
+                        {
+                            Ok(*value)
+                        }
+                        _ => Err("invalid model measurement"),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            inputs.push(vector);
+        }
+        if !rows.is_empty() {
+            return Err("subject feature rows have no corresponding candidates".into());
+        }
+        self.score_features(batch, inputs)
+    }
+
+    fn score_features(
+        &mut self,
+        batch: CandidateBatch,
+        inputs: Vec<Vec<f32>>,
+    ) -> Result<PredictionBatch, String> {
+        let count = batch.candidates.len();
+        let width = self.entry.feature_names.len();
+        if inputs.len() != count || inputs.iter().any(|row| row.len() != width) {
+            return Err("model inputs must contain one ordered vector per candidate".into());
+        }
+        let mut predictions = Vec::with_capacity(count);
+        if count != 0 {
+            let features: Vec<f32> = inputs.into_iter().flatten().collect();
+            if features.iter().any(|value| value.is_infinite()) {
                 return Err("features cannot be represented as finite float32 values".into());
             }
             let input = Tensor::from_array(([count, width], features.into_boxed_slice()))
@@ -156,8 +273,11 @@ impl Model {
             kind: batch.kind,
             input_schema: batch.input_schema,
             feature_names: batch.feature_names,
+            model_input_schema: self.entry.input_schema.clone(),
+            model_feature_names: self.entry.feature_names.clone(),
             engine_revision: batch.engine_revision,
             replay_sha256: batch.replay_sha256,
+            sampling: self.entry.sampling,
             model: self.identity.clone(),
             predictions,
         })

@@ -1,3 +1,4 @@
+use crate::bump_features::{self, FeatureDefinition, FeatureSampling};
 use crate::input::ReplayFacts;
 use crate::native_bump;
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,15 @@ impl MistakeKind {
     }
 
     pub fn validate_contract(self, schema: &str, feature_names: &[String]) -> Result<(), String> {
-        if schema != self.schema() || feature_names != self.feature_names() {
+        let compatible = match schema {
+            native_bump::SCHEMA => feature_names == self.feature_names(),
+            schema if bump_features::supports_schema(schema) => {
+                bump_features::select_definitions(feature_names)?;
+                true
+            }
+            _ => false,
+        };
+        if !compatible {
             return Err(format!("incompatible feature contract for {}", self.name()));
         }
         Ok(())
@@ -59,9 +68,20 @@ impl MistakeKind {
                 .collect(),
             engine_revision: replay.revision.clone(),
             replay_sha256: replay.replay_sha256.clone(),
+            sampling: None,
+            feature_definitions: Vec::new(),
             candidates,
         };
         batch.validate()?;
+        Ok(batch)
+    }
+
+    /// Preserve the subject convention of the eight-feature training contract.
+    pub fn initiator_candidates(self, replay: &ReplayFacts) -> Result<CandidateBatch, String> {
+        let mut batch = self.candidates(replay)?;
+        batch
+            .candidates
+            .retain(|candidate| candidate.evidence.get("initiator") == Some(&candidate.player_id));
         Ok(batch)
     }
 }
@@ -73,7 +93,7 @@ pub struct Candidate {
     pub frame: u64,
     pub raw_time: f64,
     pub player_id: Value,
-    pub features: Vec<f64>,
+    pub features: Vec<Option<f64>>,
     pub evidence: Value,
 }
 
@@ -84,13 +104,23 @@ pub struct CandidateBatch {
     pub feature_names: Vec<String>,
     pub engine_revision: String,
     pub replay_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<FeatureSampling>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feature_definitions: Vec<FeatureDefinition>,
     pub candidates: Vec<Candidate>,
 }
 
 impl CandidateBatch {
     pub fn validate(&self) -> Result<(), String> {
         let kind = MistakeKind::parse(&self.kind)?;
-        kind.validate_contract(&self.input_schema, &self.feature_names)?;
+        if self.input_schema != kind.schema()
+            || self.feature_names != kind.feature_names()
+            || self.sampling.is_some()
+            || !self.feature_definitions.is_empty()
+        {
+            return Err("candidate feature definitions disagree with the input schema".into());
+        }
         if self.engine_revision.trim().is_empty() || !crate::input::is_sha256(&self.replay_sha256) {
             return Err("missing engine revision or invalid replay fingerprint".into());
         }
@@ -101,11 +131,26 @@ impl CandidateBatch {
                 || candidate.player_id.is_null()
                 || !candidate.raw_time.is_finite()
                 || candidate.features.len() != self.feature_names.len()
-                || candidate.features.iter().any(|value| !value.is_finite())
+                || candidate
+                    .features
+                    .iter()
+                    .flatten()
+                    .any(|value| !value.is_finite())
             {
                 return Err("invalid candidate measurements or identity".into());
             }
-            if !incidents.insert(candidate.anchor()?.key()?) {
+            native_bump::validate_evidence(&candidate.evidence)?;
+            for (index, value) in candidate.features.iter().enumerate() {
+                if value.is_none() {
+                    return Err(format!(
+                        "invalid measurement or subject for {}",
+                        self.feature_names[index]
+                    ));
+                }
+            }
+            let subject =
+                serde_json::to_string(&candidate.player_id).map_err(|error| error.to_string())?;
+            if !incidents.insert((candidate.anchor()?.key()?, subject.clone())) {
                 return Err("duplicate incident anchor".into());
             }
             let mut ids: Vec<_> = candidate.source_event_ids.iter().collect();
@@ -113,7 +158,7 @@ impl CandidateBatch {
             if ids.is_empty()
                 || ids.iter().any(|id| id.trim().is_empty())
                 || ids.windows(2).any(|pair| pair[0] == pair[1])
-                || !identities.insert(ids)
+                || !identities.insert((ids, subject))
             {
                 return Err("candidate event identities must be nonempty and unique".into());
             }

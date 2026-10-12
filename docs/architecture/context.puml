@@ -6,7 +6,7 @@ skinparam ranksep 55
 skinparam wrapWidth 240
 title System context — rl-mistake-analysis
 
-System(mistakes, "rl-mistake-analysis", "Candidate detection, shared features, model inference and training-data preparation", $type="Software system")
+System(mistakes, "rl-mistake-analysis", "Candidate detection, player features, model inference, training and model export", $type="Software system")
 System_Ext(supplier, "subtr-actor · upstream", "Gameplay event extraction and replay context", $type="Software system")
 System_Ext(consumer, "Replay-analysis application · downstream", "Visual replay review, mistake presentation, and label export", $type="Software system")
 System_Ext(recordings, "Ballchasing", "Hosts downloadable Rocket League recordings", $type="Software system")

@@ -7,6 +7,14 @@ dependencies = ["numpy>=2,<3", "pyarrow>=21", "onnx>=1.18,<2"]
 [dependency-groups]
 dev = ["pytest>=8,<10"]
 notebooks = ["ipykernel>=6,<8", "jupyterlab>=4,<5"]
+training = [
+  "catboost>=1.2.8,<2",
+  "scikit-learn>=1.6,<2",
+  "onnxruntime>=1.24,<2",
+  "xgboost==3.4.1",
+  "onnxmltools>=1.16,<2",
+]
+tracking = ["mlflow>=3.11,<4", "pip>=25,<27"]
 
 [tool.uv]
 package = false

@@ -60,9 +60,9 @@ dependencies = [
 
 [[package]]
 name = "boxcars"
-version = "0.11.3"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dfd59e3b0a3f04719ec67d2c452b128654556eaed03565563100d22bbb79671"
+checksum = "a9f6cad2e22ba5bac632de26fc5f3e033dca418c1d3fe2e0ea235ec5047d3ff9"
 dependencies = [
  "bitter",
  "encoding_rs",
@@ -323,9 +323,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.33.11"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35b4e837a1d133645d1dcf283e146a4b9901e390a1c13545f959cfed3a72f24f"
+checksum = "556f6b2ea90b8d15a74e0e7bb41671c9bdf38cd9f78c284d750b9ce58a2b5be7"
 
 [[package]]
 name = "half"
@@ -832,8 +832,8 @@ checksum = "199905e6153d6405f9728fe44daace35f8f837bbf830bb6e85fbd5828709a886"
 
 [[package]]
 name = "subtr-actor"
-version = "1.2.0"
-source = "git+https://github.com/rlrml/subtr-actor?rev=40ec533da4184e46418b742804818a326b50b489#40ec533da4184e46418b742804818a326b50b489"
+version = "1.4.0"
+source = "git+https://github.com/rlrml/subtr-actor?rev=de36d0683f9c3fd1b4c8318f79537e636b51307a#de36d0683f9c3fd1b4c8318f79537e636b51307a"
 dependencies = [
  "anyhow",
  "boxcars",

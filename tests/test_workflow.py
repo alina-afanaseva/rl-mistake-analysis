@@ -36,6 +36,7 @@ def annotation(document, candidate, label=1):
         "frame": candidate["frame"],
         "initiator": event["initiator"],
         "victim": event["victim"],
+        "player_id": candidate["player_id"],
         "raw_time": candidate["raw_time"],
         "evidence": event,
         "label": label,
@@ -45,6 +46,11 @@ def annotation(document, candidate, label=1):
 
 
 def dataset(document, candidates):
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate["player_id"] == candidate["evidence"]["initiator"]
+    ]
     reference = {
         "sha256": document["replay_sha256"],
         "download": {"source": "ballchasing", "id": "fixture-id"},
@@ -108,7 +114,7 @@ def test_real_replay_extracts_intrinsic_identity_and_contacts(extracted):
         == "127d794a72ecbb02c3bd21cf4d0260cb25f6ba3f8d8b84a87839ee35a8985392"
     )
     assert document["rocket_league_id"] == "3A8451AE42FE51A53CD35E9016B123BD"
-    assert len(batch["candidates"]) == 5
+    assert len(batch["candidates"]) == 10
     contact = batch["candidates"][0]
     assert contact["frame"] == 1675
     assert contact["raw_time"] == pytest.approx(62.40333938598633)
@@ -124,6 +130,122 @@ def test_real_replay_extracts_intrinsic_identity_and_contacts(extracted):
             2892.466334,
         ]
     )
+
+
+@pytest.fixture(scope="session")
+def combined_export(engine):
+    return json.loads(
+        run(engine, "extract", ROOT / "tests/fixtures/sample.replay").stdout
+    )
+
+
+def test_combined_export_preserves_events_frames_and_boost(
+    engine, combined_export, extracted
+):
+    document, batch = extracted
+    assert set(combined_export["outputs"]) == {"events", "replay_data"}
+    for field in (
+        "name",
+        "schema_version",
+        "status",
+        "revision",
+        "replay_sha256",
+        "rocket_league_id",
+    ):
+        assert combined_export[field] == document[field]
+    timeline = combined_export["outputs"]["events"]
+    assert timeline["events"]["events"] == document["events"]
+    boost = [
+        track
+        for track in timeline["accumulation_tracks"]
+        if track["quantity"] == "boost_amount"
+    ]
+    contact = batch["candidates"][0]["evidence"]
+    tracked_players = [track["player_id"] for track in boost if track["points"]]
+    assert contact["initiator"] in tracked_players
+    assert contact["victim"] in tracked_players
+    frames = combined_export["outputs"]["replay_data"]["frame_data"]
+    assert frames["players"] and len(frames["metadata_frames"]) > 1
+    assert frames["metadata_frames"][contact["frame"]]["time"] == pytest.approx(
+        contact["time"]
+    )
+    for participant in (contact["initiator"], contact["victim"]):
+        player = next(
+            data for player_id, data in frames["players"] if player_id == participant
+        )
+        body = player["frames"][contact["frame"]]["Data"]["rigid_body"]
+        assert body["linear_velocity"] is not None
+    assert (
+        json.loads(
+            run(engine, "candidates", document=json.dumps(combined_export)).stdout
+        )[0]
+        == batch
+    )
+
+
+@pytest.mark.parametrize("selection", ["events", "replay_data", "replay_data,events"])
+def test_output_selection_preserves_selected_payloads(
+    engine, combined_export, selection
+):
+    document = json.loads(
+        run(
+            engine,
+            "extract",
+            ROOT / "tests/fixtures/sample.replay",
+            "--outputs",
+            selection,
+        ).stdout
+    )
+    assert set(document["outputs"]) == set(selection.split(","))
+    for name, payload in document["outputs"].items():
+        assert payload == combined_export["outputs"][name]
+    if selection == "replay_data":
+        assert (
+            json.loads(
+                run(engine, "replay-data", ROOT / "tests/fixtures/sample.replay").stdout
+            )
+            == document["outputs"]["replay_data"]
+        )
+
+
+def test_output_catalog_declares_all_types_available(engine):
+    catalog = json.loads(run(engine, "outputs").stdout)["outputs"]
+    available = {item["name"] for item in catalog if item["implemented"]}
+    assert available == {"events", "replay_data", "stats", "stats_timeline", "features"}
+
+
+@pytest.mark.parametrize(
+    ("selection", "message"),
+    [
+        ("unknown", "unknown output"),
+        ("", "unknown output"),
+        ("events,", "unknown output"),
+        ("events,events", "duplicate output"),
+    ],
+)
+def test_invalid_output_selection_fails_before_reading_replay(
+    engine, selection, message
+):
+    result = subprocess.run(
+        [str(engine), "extract", "missing.replay", "--outputs", selection],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1 and not result.stdout
+    assert message in result.stderr
+
+
+def test_combined_input_requires_events_output(engine, combined_export):
+    document = copy.deepcopy(combined_export)
+    del document["outputs"]["events"]
+    result = subprocess.run(
+        [str(engine), "candidates"],
+        input=json.dumps(document),
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1 and not result.stdout
+    assert "must include a valid events output" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -159,7 +281,14 @@ def test_preparation_preserves_labels_and_uses_shared_features(
     x, y, groups = arrays(table, contract)
     assert x.shape == (5, 8) and x.dtype == np.float32
     assert x == pytest.approx(
-        np.array([c["features"] for c in extracted[1]["candidates"]], dtype=np.float32)
+        np.array(
+            [
+                c["features"]
+                for c in extracted[1]["candidates"]
+                if c["player_id"] == c["evidence"]["initiator"]
+            ],
+            dtype=np.float32,
+        )
     )
     assert y.tolist() == [0, 1, 0, 1, 0]
     assert groups.tolist() == [extracted[0]["replay_sha256"]] * 5
@@ -181,7 +310,15 @@ def test_preparation_preserves_labels_and_uses_shared_features(
 
 
 @pytest.mark.parametrize(
-    "mutation", ["label", "duplicate", "victim", "undeclared_replay"]
+    "mutation",
+    [
+        "label",
+        "duplicate",
+        "victim",
+        "undeclared_replay",
+        "unrelated_player",
+        "missing_player",
+    ],
 )
 def test_annotation_contract_rejects_invalid_imports(engine, prepared_inputs, mutation):
     path, _, _, labels = prepared_inputs
@@ -191,11 +328,47 @@ def test_annotation_contract_rejects_invalid_imports(engine, prepared_inputs, mu
         labels["annotations"].append(copy.deepcopy(labels["annotations"][0]))
     elif mutation == "victim":
         labels["annotations"][0]["victim"] = {"Steam": 100}
+    elif mutation == "unrelated_player":
+        labels["annotations"][0]["player_id"] = {"Steam": "unrelated"}
+    elif mutation == "missing_player":
+        del labels["annotations"][0]["player_id"]
     else:
         labels["annotations"][0]["replay_sha256"] = "b" * 64
     path.write_text(json.dumps(labels))
     with pytest.raises(subprocess.CalledProcessError):
         run(engine, "validate-annotations", path)
+
+
+def test_native_preparation_rejects_victim_before_reading_replay(engine, tmp_path):
+    document = json.loads((ROOT / "examples/bump.json").read_text())
+    candidates = json.loads(
+        run(engine, "candidates", document=json.dumps(document)).stdout
+    )[0]
+    review = annotation(document, candidates["candidates"][1])
+    path = tmp_path / "annotations.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "replays": [{"sha256": document["replay_sha256"]}],
+                "annotations": [review],
+            }
+        )
+    )
+    run(engine, "validate-annotations", path)
+    output = tmp_path / "existing.parquet"
+    output.write_bytes(b"existing table")
+    with pytest.raises(subprocess.CalledProcessError, match="non-zero exit") as failure:
+        run(
+            engine,
+            "prepare",
+            path,
+            tmp_path / "missing-replays",
+            output,
+            "bumping_teammate",
+        )
+    assert "native preparation requires initiator labels" in failure.value.stderr
+    assert output.read_bytes() == b"existing table"
 
 
 @pytest.mark.parametrize(

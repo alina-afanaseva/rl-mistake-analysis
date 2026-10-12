@@ -10,7 +10,9 @@ use tempfile::TempDir;
 fn batch() -> CandidateBatch {
     let facts: ReplayFacts =
         serde_json::from_str(include_str!("../../../examples/bump.json")).unwrap();
-    MistakeKind::BumpingTeammate.candidates(&facts).unwrap()
+    MistakeKind::BumpingTeammate
+        .initiator_candidates(&facts)
+        .unwrap()
 }
 
 fn artifact(path: &Path, name: &str) -> ArtifactFile {
@@ -58,6 +60,7 @@ fn manifest(fixture: &str) -> (TempDir, Manifest) {
                 .iter()
                 .map(|name| (*name).into())
                 .collect(),
+            sampling: None,
             runtime: "onnx".into(),
             model_file: "model.onnx".into(),
             evaluation_file: "evaluation.json".into(),
@@ -83,12 +86,12 @@ fn onnx_scores_a_batch_preserving_order_and_model_identity() {
     let (directory, _) = manifest("square.onnx");
     let mut model = load(&directory).unwrap();
     let mut input = batch();
-    input.candidates[0].features[0] = 0.8;
+    input.candidates[0].features[0] = Some(0.8);
     let mut second = input.candidates[0].clone();
     second.source_event_ids = vec!["bump:second".into()];
     second.frame += 1;
     second.evidence["frame"] = second.frame.into();
-    second.features[0] = 0.3;
+    second.features[0] = Some(0.3);
     input.candidates.push(second);
     let predictions = model.score(input.clone()).unwrap();
     assert_eq!(predictions.model, *model.identity());
@@ -119,14 +122,29 @@ fn load_rejects_wrong_tensor_signatures_and_feature_order() {
 }
 
 #[test]
+fn incident_only_model_rejects_victim_subjects() {
+    let (directory, _) = manifest("square.onnx");
+    let mut model = load(&directory).unwrap();
+    let mut input = batch();
+    input.candidates[0].player_id = input.candidates[0].evidence["victim"].clone();
+    input.validate().unwrap();
+    assert!(
+        model
+            .score(input)
+            .unwrap_err()
+            .contains("score only the initiator")
+    );
+}
+
+#[test]
 fn score_rejects_overflow_invalid_probabilities_and_changed_contracts() {
     let (directory, _) = manifest("square.onnx");
     let mut model = load(&directory).unwrap();
     let mut input = batch();
-    input.candidates[0].features[0] = f64::MAX;
+    input.candidates[0].features[0] = Some(f64::MAX);
     assert!(model.score(input).unwrap_err().contains("float32"));
     let mut input = batch();
-    input.candidates[0].features[0] = 2.0;
+    input.candidates[0].features[0] = Some(2.0);
     assert!(model.score(input).unwrap_err().contains("probability"));
     let mut input = batch();
     input.feature_names.reverse();
@@ -159,8 +177,8 @@ fn artifacts_and_external_tensor_changes_are_verified_and_identified() {
     catalog.models[0].files.push(undeclared);
     save_manifest(directory.path(), &catalog);
     let mut input = batch();
-    input.candidates[0].features[0] = 0.8;
-    input.candidates[0].features[1] = 0.2;
+    input.candidates[0].features[0] = Some(0.8);
+    input.candidates[0].features[1] = Some(0.2);
     let mut original = load(&directory).unwrap();
     let identity = original.identity().clone();
     assert!((original.score(input.clone()).unwrap().predictions[0].score - 0.64).abs() < 1e-6);

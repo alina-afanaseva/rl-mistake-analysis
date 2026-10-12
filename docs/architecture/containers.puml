@@ -2,7 +2,7 @@
 !include <C4/C4_Container>
 LAYOUT_TOP_DOWN()
 skinparam backgroundColor #FFFFFF
-skinparam ranksep 15
+skinparam ranksep 45
 skinparam nodesep 85
 title Container view — rl-mistake-analysis standalone tools
 
@@ -12,9 +12,12 @@ System_Ext(recordings, "Ballchasing", "Hosts downloadable Rocket League recordin
 
 System_Boundary(project, "rl-mistake-analysis") {
     Container(cli, "Replay CLI", "Rust executable", "Runs candidate detection, feature extraction, labeled-table preparation, and inference")
+    Container(builder, "Replay feature-table builder", "Python executable", "Requests player-specific replay features from the Replay CLI and writes an unlabeled feature table")
     Container(downloader, "Replay downloader", "Python executable", "Retrieves original recordings referenced by reviewed datasets")
+    Container(training, "Model training tools", "Python modules", "Join reviewed incidents to training features, evaluate models, select a winner and verify ONNX exports")
     ContainerDb(dataset, "Dataset files", "Local JSON, replay and Parquet files", "Reviewed incidents, original recordings and prepared feature tables")
     ContainerDb(models, "Model files", "Local ONNX and JSON files", "Classifier graphs, evaluation reports and release catalog")
+    ContainerDb(tracking, "Experiment history", "MLflow", "Evaluation metrics, hyperparameters and model artifacts")
 }
 
 Rel_U(consumer, cli, "Gets candidates for visual review and predictions to display mistakes", "CLI / JSON")
@@ -24,10 +27,18 @@ Rel_U(downloader, recordings, "Downloads referenced recordings", "HTTPS")
 Rel_D(cli, dataset, "Reads recordings and labels; writes feature tables", "Filesystem")
 Rel_D(cli, models, "Loads models for validation and offline predictions", "Filesystem")
 Rel_D(downloader, dataset, "Reads recording references; stores downloaded recordings", "Filesystem")
-Lay_R(cli, downloader)
+Rel_L(builder, cli, "Requests player-specific replay features", "CLI / JSON")
+Rel_D(builder, dataset, "Reads combined analyses; writes unlabeled feature tables", "Filesystem")
+Rel_D(training, dataset, "Reads training features and reviewed incidents; writes labeled tables", "Parquet / JSON")
+Rel_D(training, models, "Produces selected ONNX artifacts for release", "Filesystem")
+Rel_R(training, tracking, "Logs evaluation metrics, parameters and models", "MLflow API")
+Lay_R(cli, builder)
+Lay_R(builder, downloader)
 Lay_D(cli, models)
+Lay_D(builder, dataset)
 Lay_D(downloader, dataset)
 Lay_R(supplier, recordings)
 Lay_R(dataset, consumer)
+Lay_D(dataset, training)
 SHOW_LEGEND($details=None())
 @enduml

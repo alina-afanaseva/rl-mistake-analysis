@@ -51,6 +51,12 @@ pub fn prepare(
         if labels.is_empty() {
             continue;
         }
+        for annotation in &labels {
+            let IncidentAnchor::BumpingTeammate { initiator, .. } = &annotation.incident;
+            if annotation.player_id != *initiator {
+                return Err("native preparation requires initiator labels; use training.bump_dataset for victim labels".into());
+            }
+        }
         let path = recordings.join(format!("{}.replay", recording.sha256));
         let bytes =
             fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
@@ -64,7 +70,7 @@ pub fn prepare(
             return Err(format!("intrinsic replay ID mismatch: {}", path.display()).into());
         }
         recording.rocket_league_id = facts.rocket_league_id.clone();
-        let batch = kind.candidates(&facts)?;
+        let batch = kind.initiator_candidates(&facts)?;
         let mut incidents = HashMap::new();
         for candidate in batch.candidates {
             incidents.insert(candidate.anchor()?.key()?, candidate);
@@ -229,8 +235,8 @@ fn write_table(
             for index in 0..kind.feature_names().len() {
                 let values: Vec<_> = chunk
                     .iter()
-                    .map(|row| row.candidate.features[index])
-                    .collect();
+                    .map(|row| row.candidate.features[index].ok_or("missing native feature"))
+                    .collect::<Result<Vec<_>, _>>()?;
                 write_column::<DoubleType>(&mut group, &values, None)?;
             }
             group.close()?;

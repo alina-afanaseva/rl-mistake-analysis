@@ -1,4 +1,5 @@
 use crate::annotations::IncidentAnchor;
+use crate::bump_contacts::{Contact, unique_contact_ids};
 use crate::input::ReplayFacts;
 use crate::kind::Candidate;
 use serde::Deserialize;
@@ -41,11 +42,21 @@ struct Bump {
 }
 
 pub(crate) fn anchor(candidate: &Candidate) -> Result<IncidentAnchor, String> {
-    let bump: Bump = serde_json::from_value(candidate.evidence.clone())
+    #[derive(Deserialize)]
+    struct Identity {
+        frame: u64,
+        time: f64,
+        initiator: Value,
+        victim: Value,
+        is_team_bump: bool,
+        initiator_is_team_0: bool,
+        victim_is_team_0: bool,
+    }
+    let bump: Identity = serde_json::from_value(candidate.evidence.clone())
         .map_err(|error| format!("invalid bump evidence: {error}"))?;
     if candidate.frame != bump.frame
         || candidate.raw_time != bump.time
-        || candidate.player_id != bump.initiator
+        || (candidate.player_id != bump.initiator && candidate.player_id != bump.victim)
         || !bump.is_team_bump
         || bump.initiator_is_team_0 != bump.victim_is_team_0
         || bump.initiator.is_null()
@@ -59,6 +70,12 @@ pub(crate) fn anchor(candidate: &Candidate) -> Result<IncidentAnchor, String> {
         initiator: bump.initiator,
         victim: bump.victim,
     })
+}
+
+pub(crate) fn validate_evidence(evidence: &Value) -> Result<(), String> {
+    serde_json::from_value::<Bump>(evidence.clone())
+        .map(|_| ())
+        .map_err(|error| format!("invalid native bump evidence: {error}"))
 }
 
 pub(crate) fn candidates(replay: &ReplayFacts) -> Result<Vec<Candidate>, String> {
@@ -113,16 +130,36 @@ pub(crate) fn candidates(replay: &ReplayFacts) -> Result<Vec<Candidate>, String>
             return Err("nonfinite native bump measurement".into());
         }
         let evidence = parsed.payload;
-        candidates.push(Candidate {
+        let candidate = Candidate {
             kind: "bumping_teammate".into(),
             source_event_ids: vec![event.meta.id.clone()],
             frame: bump.frame,
             raw_time: bump.time,
             player_id: bump.initiator,
-            features,
+            features: features.into_iter().map(Some).collect(),
             evidence,
-        });
+        };
+        candidates.push(candidate);
     }
+    let selected = unique_contact_ids(candidates.iter().map(|candidate| Contact {
+        id: &candidate.source_event_ids[0],
+        frame: candidate.frame,
+        initiator: &candidate.player_id,
+        victim: &candidate.evidence["victim"],
+    }))?;
+    let mut candidates: Vec<_> = candidates
+        .into_iter()
+        .filter(|candidate| selected.contains(&candidate.source_event_ids[0]))
+        .flat_map(|candidate| {
+            [
+                candidate.clone(),
+                Candidate {
+                    player_id: candidate.evidence["victim"].clone(),
+                    ..candidate
+                },
+            ]
+        })
+        .collect();
     candidates.sort_by(|left, right| {
         left.frame
             .cmp(&right.frame)
