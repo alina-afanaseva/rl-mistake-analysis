@@ -1,5 +1,6 @@
 //! Touch-stage context for native bang-with-time candidates.
 
+mod exchange;
 mod schema;
 
 pub use crate::feature_input::ReplayAnalysis;
@@ -346,6 +347,7 @@ struct ReplayContext<'a> {
     context: Context<'a>,
     roster: HashMap<String, bool>,
     touches: BTreeMap<usize, Vec<&'a Event>>,
+    team_distances: Vec<[exchange::TeamDistance; 2]>,
 }
 
 impl<'a> ReplayContext<'a> {
@@ -403,10 +405,12 @@ impl<'a> ReplayContext<'a> {
         for group in groups.values_mut() {
             group.sort_by_key(|event| event.meta.id.as_str());
         }
+        let team_distances = exchange::team_distances(&context, &roster)?;
         Ok(Self {
             context,
             roster,
             touches: groups,
+            team_distances,
         })
     }
 
@@ -469,6 +473,7 @@ impl<'a> ReplayContext<'a> {
         possession_features(context, touch, play_end, &mut values)?;
         context.goal_features(time, play_end, team, &mut values)?;
         subject_followup_features(context, touch, &samples, &mut values)?;
+        exchange::features(self, touch, &samples, &mut values)?;
         values.validate(definitions)?;
         Ok(FeatureRow {
             source_event_id: touch.meta.id.clone(),
@@ -694,6 +699,7 @@ pub fn extract(
             "goal_context",
             "kickoff",
             "whiff",
+            "bump",
             "beaten_to_ball",
             "demolition",
             "ball_carry",

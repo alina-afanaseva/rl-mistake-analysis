@@ -106,12 +106,51 @@ Unavailable stages, bodies, states, or required velocities produce nullable meas
 | `subject_displacement_to_stage_axis` | nullable float32 | Subject's stage position minus its candidate position, expressed in team axes. A continuous observed subject track within one life defines a valid displacement. | `replay_data.frame_data`, `events.demolition` |
 | `subject_ball_distance_at_stage` | nullable float32 | Full 3D distance between the subject's car center and ball center at the stage's contact frame. | `replay_data.frame_data` |
 | `subject_heading_at_stage_axis` | nullable float32 | Subject's forward unit vector from its normalized native quaternion at the stage's contact frame, expressed in team axes. | `replay_data.frame_data.players.rigid_body.rotation` |
+| `play_elapsed_s` | float32 | Candidate time minus the observed live-play start. | `events.kickoff, replay_data.frame_data.metadata_frames` |
+| `candidate_outgoing_ball_velocity_toward` | nullable float32 | Native outgoing ball velocity along the toward axis at touch 0. | `replay_data.frame_data.ball_data` |
+| `exchange_ball_position_min_toward` | nullable float32 | Minimum ball-center toward coordinate over every native frame from touch 0 through touch 2. | `replay_data.frame_data.ball_data` |
+| `exchange_ball_position_max_toward` | nullable float32 | Maximum ball-center toward coordinate over every native frame from touch 0 through touch 2. | `replay_data.frame_data.ball_data` |
+| `candidate_outgoing_ball_velocity_side` | nullable float32 | Native outgoing ball velocity along the side axis at touch 0. | `replay_data.frame_data.ball_data` |
+| `exchange_ball_position_min_side` | nullable float32 | Minimum ball-center side coordinate over every native frame from touch 0 through touch 2. | `replay_data.frame_data.ball_data` |
+| `exchange_ball_position_max_side` | nullable float32 | Maximum ball-center side coordinate over every native frame from touch 0 through touch 2. | `replay_data.frame_data.ball_data` |
+| `candidate_outgoing_ball_velocity_up` | nullable float32 | Native outgoing ball velocity along the up axis at touch 0. | `replay_data.frame_data.ball_data` |
+| `exchange_ball_position_min_up` | nullable float32 | Minimum ball-center up coordinate over every native frame from touch 0 through touch 2. | `replay_data.frame_data.ball_data` |
+| `exchange_ball_position_max_up` | nullable float32 | Maximum ball-center up coordinate over every native frame from touch 0 through touch 2. | `replay_data.frame_data.ball_data` |
+| `candidate_directed_at_own_goal` | nullable bool | The forward ray of the outgoing ball velocity overlaps the own goal opening, accounting for the ball radius. | `replay_data.frame_data.ball_data` |
+| `candidate_directed_at_opponent_goal` | nullable bool | The forward ray of the outgoing ball velocity overlaps the opponent goal opening, accounting for the ball radius. | `replay_data.frame_data.ball_data` |
+| `subject_bumped_during_exchange` | nullable bool | A native bump names the judged player as victim during the inclusive interval from touch 0 through touch 2. | `events.bump` |
+| `any_bump_during_exchange` | nullable bool | Any native bump occurs during the inclusive interval from touch 0 through touch 2. | `events.bump` |
+| `subject_whiff_during_exchange` | nullable bool | The judged player has a native whiff anchored after touch 0 through touch 2 and confirmed by touch 2. | `events.whiff` |
+| `teammate_whiff_during_exchange` | nullable bool | Another player on the judged team has a native whiff anchored after touch 0 through touch 2 and confirmed by touch 2. | `events.whiff` |
+| `own_team_ball_distance_candidate_to_first_touch` | nullable float32 | Minimum over every native frame from touch 0 through touch 1 of the closest tracked own-team car-center to ball-center distance. The own team includes the judged player. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `opponent_ball_distance_candidate_to_first_touch` | nullable float32 | Minimum over every native frame from touch 0 through touch 1 of the closest tracked opponent car-center to ball-center distance. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `ball_own_goal_distance_candidate_to_first_touch` | nullable float32 | Minimum over every native frame from touch 0 through touch 1 of the ball-surface distance to the nearest point of the own goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `ball_opponent_goal_distance_candidate_to_first_touch` | nullable float32 | Minimum over every native frame from touch 0 through touch 1 of the ball-surface distance to the nearest point of the opponent goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `own_team_ball_distance_at_first_touch` | nullable float32 | Measurement at touch 1 of the closest tracked own-team car-center to ball-center distance. The own team includes the judged player. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `opponent_ball_distance_at_first_touch` | nullable float32 | Measurement at touch 1 of the closest tracked opponent car-center to ball-center distance. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `ball_own_goal_distance_at_first_touch` | nullable float32 | Measurement at touch 1 of the ball-surface distance to the nearest point of the own goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `ball_opponent_goal_distance_at_first_touch` | nullable float32 | Measurement at touch 1 of the ball-surface distance to the nearest point of the opponent goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `own_team_ball_distance_first_to_second_touch` | nullable float32 | Minimum over every native frame from touch 1 through touch 2 of the closest tracked own-team car-center to ball-center distance. The own team includes the judged player. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `opponent_ball_distance_first_to_second_touch` | nullable float32 | Minimum over every native frame from touch 1 through touch 2 of the closest tracked opponent car-center to ball-center distance. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `ball_own_goal_distance_first_to_second_touch` | nullable float32 | Minimum over every native frame from touch 1 through touch 2 of the ball-surface distance to the nearest point of the own goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `ball_opponent_goal_distance_first_to_second_touch` | nullable float32 | Minimum over every native frame from touch 1 through touch 2 of the ball-surface distance to the nearest point of the opponent goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `own_team_ball_distance_at_second_touch` | nullable float32 | Measurement at touch 2 of the closest tracked own-team car-center to ball-center distance. The own team includes the judged player. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `opponent_ball_distance_at_second_touch` | nullable float32 | Measurement at touch 2 of the closest tracked opponent car-center to ball-center distance. | `events.replay_meta, events.player_activity, replay_data.frame_data` |
+| `ball_own_goal_distance_at_second_touch` | nullable float32 | Measurement at touch 2 of the ball-surface distance to the nearest point of the own goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `ball_opponent_goal_distance_at_second_touch` | nullable float32 | Measurement at touch 2 of the ball-surface distance to the nearest point of the opponent goal opening. Overlap has distance zero. | `replay_data.frame_data.ball_data` |
+| `exchange_possession_own_team_s` | nullable float32 | Sum of native own_team possession-span durations clipped to the interval from touch 0 through touch 2. | `events.possession` |
+| `exchange_possession_opponent_s` | nullable float32 | Sum of native opponent possession-span durations clipped to the interval from touch 0 through touch 2. | `events.possession` |
+| `exchange_possession_neutral_s` | nullable float32 | Sum of native neutral possession-span durations clipped to the interval from touch 0 through touch 2. | `events.possession` |
+
+Interval aggregates require their endpoints and complete observations throughout the interval. A missing ball frame makes trajectory and goal-distance aggregates unavailable; an unknown activity state or missing tracked car makes that team's distance aggregate unavailable. Demolished players are excluded; an interval with no tracked team car at any frame has no team-distance measurement. Possession durations are unavailable when native spans leave an unobserved gap; gaps are not counted as neutral possession.
+
+Goal openings use SubtrActor's standard Soccar dimensions and collision ball radius. Distance is the Euclidean distance from the ball center to the nearest point of the opening, minus the radius, clamped at zero. Direction checks use the measured velocity ray without gravity, defenders, later contacts, a speed threshold, or a prediction time limit. Ball-coordinate extrema use the same team axes as the contact snapshots.
 
 ## Training and scoring
 
 ### Feature selection
 
-Models declare an ordered subset of the 107 known measurements in their manifest. The base schema is `bang_with_time.context.v1`; named selections use `bang_with_time.context.v1.NAME.v1`. Feature selection and numeric conversion use the [shared training API](../training.md#dataset-inputs).
+Models declare an ordered subset of the 142 known measurements in their manifest. The base schema is `bang_with_time.context.v1`; named selections use `bang_with_time.context.v1.NAME.v1`. Feature selection and numeric conversion use the [shared training API](../training.md#dataset-inputs).
 
 ### Scoring
 

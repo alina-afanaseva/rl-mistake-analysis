@@ -12,3 +12,4 @@ include = ["src/**", "Cargo.toml"]
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+subtr-actor = { workspace = true }

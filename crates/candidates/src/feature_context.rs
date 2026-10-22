@@ -132,6 +132,34 @@ impl<'a> Context<'a> {
         }
         Ok((start, end))
     }
+
+    pub(crate) fn states_by_frame(
+        &self,
+        stream: &str,
+        player: &Value,
+    ) -> Result<Vec<Option<&'a str>>, String> {
+        let frames = &self.analysis.outputs.replay_data.frame_data.metadata_frames;
+        let mut states = vec![None; frames.len()];
+        for event in self.events(stream) {
+            if event.participant("player")? != player {
+                continue;
+            }
+            let start = event.number("time")?;
+            let end = event.number("end_time")?;
+            if end < start {
+                return Err(format!("reversed {stream} state span"));
+            }
+            let first = frames.partition_point(|frame| frame.time <= start);
+            let after = frames.partition_point(|frame| frame.time <= end);
+            let state = event.text("state")?;
+            for current in &mut states[first..after] {
+                if current.replace(state).is_some() {
+                    return Err(format!("overlapping {stream} state spans"));
+                }
+            }
+        }
+        Ok(states)
+    }
 }
 
 pub(crate) fn tag<'a>(event: &'a Event, group: &str) -> Result<Option<&'a str>, String> {

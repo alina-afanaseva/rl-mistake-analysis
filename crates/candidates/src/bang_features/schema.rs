@@ -199,5 +199,74 @@ pub fn definitions() -> Vec<FeatureDefinition> {
             );
         }
     }
+    add(
+        "play_elapsed_s".into(),
+        F32,
+        false,
+        "events.kickoff,replay_data.frame_data.metadata_frames",
+    );
+    for axis in ["toward", "side", "up"] {
+        add(
+            format!("candidate_outgoing_ball_velocity_{axis}"),
+            F32,
+            true,
+            "replay_data.frame_data.ball_data",
+        );
+        for bound in ["min", "max"] {
+            add(
+                format!("exchange_ball_position_{bound}_{axis}"),
+                F32,
+                true,
+                "replay_data.frame_data.ball_data",
+            );
+        }
+    }
+    for goal in ["own", "opponent"] {
+        add(
+            format!("candidate_directed_at_{goal}_goal"),
+            Boolean,
+            true,
+            "replay_data.frame_data.ball_data",
+        );
+    }
+    for (name, source) in [
+        ("subject_bumped_during_exchange", "events.bump"),
+        ("any_bump_during_exchange", "events.bump"),
+        ("subject_whiff_during_exchange", "events.whiff"),
+        ("teammate_whiff_during_exchange", "events.whiff"),
+    ] {
+        add(name.into(), Boolean, true, source);
+    }
+    for sample in [
+        "candidate_to_first_touch",
+        "at_first_touch",
+        "first_to_second_touch",
+        "at_second_touch",
+    ] {
+        for team in ["own_team", "opponent"] {
+            add(
+                format!("{team}_ball_distance_{sample}"),
+                F32,
+                true,
+                "events.replay_meta,events.player_activity,replay_data.frame_data",
+            );
+        }
+        for goal in ["own", "opponent"] {
+            add(
+                format!("ball_{goal}_goal_distance_{sample}"),
+                F32,
+                true,
+                "replay_data.frame_data.ball_data",
+            );
+        }
+    }
+    for team in ["own_team", "opponent", "neutral"] {
+        add(
+            format!("exchange_possession_{team}_s"),
+            F32,
+            true,
+            "events.possession",
+        );
+    }
     result
 }

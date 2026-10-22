@@ -2,6 +2,7 @@ use rl_mistake_analysis_candidates::bang_features::{
     FeatureBatch, FeatureSampling, ReplayAnalysis, SamplingMethod, extract,
 };
 use serde_json::{Value, json};
+use subtr_actor::{BALL_COLLISION_RADIUS, STANDARD_GOAL_LINE_Y, STANDARD_GOAL_MOUTH_HALF_WIDTH_X};
 
 fn event(id: &str, stream: &str, payload: Value) -> Value {
     let kind = if stream == "air_dribble" {
@@ -185,6 +186,192 @@ fn row(document: Value) -> Value {
 }
 
 #[test]
+fn exchange_extrema_and_team_distances_include_every_native_frame() {
+    let mut document = fixture();
+    let frames = &mut document["outputs"]["replay_data"]["frame_data"];
+    for (frame, position) in [(4, [-500., 1234., 999.]), (6, [700., -222., 15.])] {
+        frames["ball_data"]["frames"][frame]["Data"]["rigid_body"] =
+            body(position[0], position[1], position[2]);
+    }
+    frames["ball_data"]["frames"][8]["Data"]["rigid_body"] = body(-9000., 9000., 2000.);
+    frames["players"][3][1]["frames"][4]["Data"]["rigid_body"] = body(-497., 1234., 999.);
+    frames["players"][0][1]["frames"][6]["Data"]["rigid_body"] = body(700., -222., 19.);
+    frames["players"][2][1]["frames"][3]["Data"]["rigid_body"] = body(35., 60., 103.);
+    frames["players"][2][1]["frames"][6]["Data"]["rigid_body"] = body(700., -220., 15.);
+    let features = row(document)["features"].clone();
+    for (name, expected) in [
+        ("play_elapsed_s", 1.),
+        ("exchange_ball_position_min_toward", -222.),
+        ("exchange_ball_position_max_toward", 1234.),
+        ("exchange_ball_position_min_side", -700.),
+        ("exchange_ball_position_max_side", 500.),
+        ("exchange_ball_position_min_up", 15.),
+        ("exchange_ball_position_max_up", 999.),
+        ("own_team_ball_distance_candidate_to_first_touch", 3.),
+        ("own_team_ball_distance_first_to_second_touch", 4.),
+        ("opponent_ball_distance_candidate_to_first_touch", 5.),
+        ("opponent_ball_distance_first_to_second_touch", 2.),
+        ("own_team_ball_distance_at_first_touch", 9441_f64.sqrt()),
+        ("own_team_ball_distance_at_second_touch", 20061_f64.sqrt()),
+        ("opponent_ball_distance_at_first_touch", 8200_f64.sqrt()),
+        ("opponent_ball_distance_at_second_touch", 18260_f64.sqrt()),
+    ] {
+        assert!(
+            (features[name].as_f64().unwrap() - expected).abs() < 0.0001,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn missing_interval_observations_are_not_replaced_by_observed_minima() {
+    let mut document = fixture();
+    document["outputs"]["replay_data"]["frame_data"]["players"][3][1]["frames"][4] = json!("Empty");
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][6] = json!("Empty");
+    let features = row(document)["features"].clone();
+    for name in [
+        "own_team_ball_distance_candidate_to_first_touch",
+        "own_team_ball_distance_first_to_second_touch",
+        "opponent_ball_distance_first_to_second_touch",
+        "ball_own_goal_distance_first_to_second_touch",
+        "ball_opponent_goal_distance_first_to_second_touch",
+        "exchange_ball_position_min_toward",
+        "exchange_ball_position_max_up",
+    ] {
+        assert!(features[name].is_null(), "{name}");
+    }
+    assert!(features["opponent_ball_distance_candidate_to_first_touch"].is_number());
+    assert!(features["own_team_ball_distance_at_first_touch"].is_number());
+    assert!(features["ball_opponent_goal_distance_at_second_touch"].is_number());
+}
+
+#[test]
+fn team_minima_exclude_demolished_cars_without_treating_their_absence_as_missing_data() {
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.retain(|event| {
+        event["meta"]["stream"] != "player_activity"
+            || event["payload"]["payload"]["player"]["Steam"] != 3
+    });
+    events.extend([
+        activity(3, false, "demolished", 0, 4),
+        activity(3, false, "tracked", 4, 13),
+    ]);
+    document["outputs"]["replay_data"]["frame_data"]["players"][2][1]["frames"][3]["Data"]["rigid_body"] =
+        body(30., 60., 103.);
+    let features = row(document)["features"].clone();
+    assert!(
+        (features["opponent_ball_distance_candidate_to_first_touch"]
+            .as_f64()
+            .unwrap()
+            - 8200_f64.sqrt())
+        .abs()
+            < 0.0001
+    );
+}
+
+#[test]
+fn native_bumps_and_confirmed_subject_and_teammate_whiffs_are_distinct() {
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.extend([
+        event("bump:6", "bump", json!({"frame": 6, "victim": {"Steam": 1}, "initiator": {"Steam": 3}})),
+        event("whiff:subject", "whiff", json!({"frame": 3, "kind": "whiff", "player": {"Steam": 1}, "is_team_0": true, "resolved_time": 3.})),
+        event("whiff:teammate", "whiff", json!({"frame": 6, "kind": "whiff", "player": {"Steam": 2}, "is_team_0": true, "resolved_time": 3.5})),
+    ]);
+    let features = row(document.clone())["features"].clone();
+    for name in [
+        "subject_bumped_during_exchange",
+        "any_bump_during_exchange",
+        "subject_whiff_during_exchange",
+        "teammate_whiff_during_exchange",
+    ] {
+        assert_eq!(features[name], true, "{name}");
+    }
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    let count = events.len();
+    events[count - 3]["payload"]["payload"]["victim"] = json!({"Steam": 2});
+    events[count - 2]["payload"]["payload"]["resolved_time"] = json!(4.);
+    events[count - 1]["payload"]["payload"]["frame"] = json!(8);
+    let features = row(document)["features"].clone();
+    assert_eq!(features["any_bump_during_exchange"], true);
+    assert_eq!(features["subject_bumped_during_exchange"], false);
+    assert_eq!(features["subject_whiff_during_exchange"], false);
+    assert_eq!(features["teammate_whiff_during_exchange"], false);
+}
+
+#[test]
+fn possession_durations_clip_native_spans_to_the_observed_exchange() {
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events[6]["payload"]["payload"]["time"] = json!(3.);
+    events[6]["payload"]["payload"]["frame"] = json!(6);
+    events.push(event(
+        "possession:neutral",
+        "possession",
+        json!({"time": 2., "end_time": 3., "frame": 4, "end_frame": 6, "active": true, "possession_state": "neutral"}),
+    ));
+    let features = row(document.clone())["features"].clone();
+    assert_eq!(features["exchange_possession_own_team_s"], 1.);
+    assert_eq!(features["exchange_possession_opponent_s"], 0.5);
+    assert_eq!(features["exchange_possession_neutral_s"], 1.);
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.last_mut().unwrap()["payload"]["payload"]["end_time"] = json!(2.5);
+    events.last_mut().unwrap()["payload"]["payload"]["end_frame"] = json!(5);
+    let features = row(document)["features"].clone();
+    for team in ["own_team", "opponent", "neutral"] {
+        assert!(features[format!("exchange_possession_{team}_s")].is_null());
+    }
+}
+
+#[test]
+fn goal_distances_allow_ball_overlap_and_direction_uses_the_native_velocity_ray() {
+    let radius = f64::from(BALL_COLLISION_RADIUS);
+    let goal = f64::from(STANDARD_GOAL_LINE_Y);
+    let edge = f64::from(STANDARD_GOAL_MOUTH_HALF_WIDTH_X);
+    let mut document = fixture();
+    let frames = &mut document["outputs"]["replay_data"]["frame_data"];
+    frames["ball_data"]["frames"][2]["Data"]["rigid_body"] = body(edge + radius / 2., 0., 100.);
+    frames["ball_data"]["frames"][2]["Data"]["rigid_body"]["linear_velocity"] =
+        json!({"x": 0., "y": 100., "z": 0.});
+    frames["ball_data"]["frames"][4]["Data"]["rigid_body"] = body(0., goal - radius / 2., 100.);
+    frames["ball_data"]["frames"][5]["Data"]["rigid_body"] = body(0., goal - radius * 3., 100.);
+    frames["ball_data"]["frames"][7]["Data"]["rigid_body"] = body(0., -goal + radius / 2., 100.);
+    let features = row(document.clone())["features"].clone();
+    assert_eq!(features["candidate_outgoing_ball_velocity_toward"], 100.);
+    assert_eq!(features["candidate_directed_at_opponent_goal"], true);
+    assert_eq!(features["candidate_directed_at_own_goal"], false);
+    assert_eq!(
+        features["ball_opponent_goal_distance_candidate_to_first_touch"],
+        0.
+    );
+    assert_eq!(
+        features["ball_opponent_goal_distance_at_first_touch"],
+        radius * 2.
+    );
+    assert_eq!(features["ball_own_goal_distance_at_second_touch"], 0.);
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][2]["Data"]["rigid_body"]
+        ["location"]["x"] = json!(edge + radius * 2.);
+    assert_eq!(
+        row(document.clone())["features"]["candidate_directed_at_opponent_goal"],
+        false
+    );
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][2]["Data"]["rigid_body"]
+        ["linear_velocity"] = Value::Null;
+    assert!(row(document)["features"]["candidate_directed_at_opponent_goal"].is_null());
+}
+
+#[test]
 fn native_stages_preserve_simultaneous_touches_and_candidate_provenance() {
     let row = row(fixture());
     assert_eq!(row["touch_id"], 1);
@@ -299,6 +486,12 @@ fn goals_and_kickoffs_bound_the_exchange_and_censor_unobserved_stages() {
             "subject_beaten_during_exchange",
             "subject_next_touch_delay_s",
             "subject_displacement_to_second_touch_up",
+            "exchange_ball_position_max_toward",
+            "own_team_ball_distance_first_to_second_touch",
+            "ball_own_goal_distance_at_second_touch",
+            "exchange_possession_own_team_s",
+            "subject_bumped_during_exchange",
+            "teammate_whiff_during_exchange",
         ] {
             assert!(row["features"][name].is_null(), "{name}");
         }
@@ -328,6 +521,14 @@ fn team_coordinates_rotate_both_ground_axes_and_keep_height() {
     assert_eq!(row["features"]["candidate_ball_position_toward"], -40.);
     assert_eq!(row["features"]["candidate_ball_position_side"], 20.);
     assert_eq!(row["features"]["candidate_ball_position_up"], 102.);
+    assert_eq!(row["features"]["exchange_ball_position_min_toward"], -140.);
+    assert_eq!(row["features"]["exchange_ball_position_max_toward"], -40.);
+    assert_eq!(row["features"]["exchange_ball_position_min_side"], 20.);
+    assert_eq!(row["features"]["exchange_ball_position_max_side"], 70.);
+    assert_eq!(
+        row["features"]["candidate_outgoing_ball_velocity_toward"],
+        -4.
+    );
     assert_eq!(
         row["features"]["closest_opponent_position_relative_ball_side"],
         -2.
