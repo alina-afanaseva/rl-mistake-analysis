@@ -33,7 +33,7 @@ pub fn definitions() -> Vec<FeatureDefinition> {
             format!("{stage}_outgoing_ball_speed"),
             F32,
             true,
-            "events.touch.sample_frame,replay_data.frame_data.ball_data",
+            "events.touch.frame,replay_data.frame_data.ball_data",
         );
         for depth in ["level_with_ball", "ahead_of_ball"] {
             add(

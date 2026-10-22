@@ -54,7 +54,7 @@ The candidate is the selected terminal touch. The previous stage is the precedin
 
 Measurements stay within the observed live-play segment: from the kickoff's `live_action_start_time` or observed segment start through the next goal, kickoff start, or replay end. Goal-boundary touches are included. Delays use elapsed replay seconds from native frame timestamps.
 
-Ball positions use contact frames. Incoming speed uses the preceding frame in the same segment. Outgoing speed uses the touch's native `sample_frame`; `sample_time` must match that frame's timestamp. Event contact timestamps must match their native frames.
+Ball positions and outgoing speed use the shared contact frame. Incoming speed uses the preceding frame in the same segment. Native classification may confirm a toucher later; its `sample_frame` and `sample_time` are validated but do not select the ball measurement. Event contact timestamps must match their native frames.
 
 Team axes place the arena center at the origin. `toward` points toward the opposing goal, `side` is the perpendicular ground axis, and `up` is world height. Both ground axes rotate with the judged player's team. Distances and speeds use full 3D native coordinates; headings use normalized car quaternions.
 
@@ -70,7 +70,7 @@ Unavailable stages, bodies, states, or required velocities produce nullable meas
 | --- | --- | --- | --- |
 | `candidate_ball_position_axis` | nullable float32 | Native ball center at the candidate contact frame, expressed in team axes. | `replay_data.frame_data.ball_data` |
 | `candidate_incoming_ball_speed` | nullable float32 | Length of the native ball velocity in the preceding frame. | `replay_data.frame_data.ball_data` |
-| `candidate_outgoing_ball_speed` / `stage_outgoing_ball_speed` | nullable float32 | Length of the native ball velocity at the touch's classification sample frame. Simultaneous touches share that sample frame. | `events.touch.sample_frame`, `replay_data.frame_data.ball_data` |
+| `candidate_outgoing_ball_speed` / `stage_outgoing_ball_speed` | nullable float32 | Length of the native ball velocity at the shared contact frame. Delayed classification does not change the measurement frame. | `events.touch.frame`, `replay_data.frame_data.ball_data` |
 | `closest_opponent_position_relative_ball_axis` | nullable float32 | Selected opponent's car center minus the ball center in the preceding frame, expressed in team axes. | `events.replay_meta`, `events.player_activity`, `replay_data.frame_data` |
 | `closest_opponent_heading_axis` | nullable float32 | Selected opponent's forward unit vector from its normalized native quaternion in the preceding frame, expressed in team axes. | `events.replay_meta`, `events.player_activity`, `replay_data.frame_data` |
 | `closest_opponent_velocity_relative_ball_axis` | nullable float32 | Selected opponent's velocity minus the ball velocity in the preceding frame, expressed in team axes. | `events.replay_meta`, `events.player_activity`, `replay_data.frame_data` |

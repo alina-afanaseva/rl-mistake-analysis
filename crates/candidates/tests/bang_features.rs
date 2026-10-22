@@ -188,7 +188,7 @@ fn row(document: Value) -> Value {
 fn native_stages_preserve_simultaneous_touches_and_candidate_provenance() {
     let row = row(fixture());
     assert_eq!(row["touch_id"], 1);
-    assert_eq!(row["samples"]["outgoing_sample_frame"], 3);
+    assert_eq!(row["samples"]["outgoing_sample_frame"], 2);
     assert_eq!(row["samples"]["first_touch"]["touch_ids"], json!([2, 3]));
     assert_eq!(row["samples"]["second_touch"]["touch_ids"], json!([4]));
     let f = &row["features"];
@@ -677,14 +677,14 @@ fn stage_categories_use_the_judged_player_and_native_transition_times() {
 }
 
 #[test]
-fn outgoing_samples_are_shared_by_simultaneous_touchers_and_bound_by_play_end() {
+fn contact_frames_define_ball_speed_for_delayed_touch_confirmations() {
     let mut document = fixture();
-    for index in [2, 3] {
-        document["outputs"]["events"]["events"]["events"][index]["payload"]["payload"]["sample_frame"] =
-            json!(6);
-        document["outputs"]["events"]["events"]["events"][index]["payload"]["payload"]["sample_time"] =
-            json!(3.);
-    }
+    document["outputs"]["events"]["events"]["events"][3]["payload"]["payload"]["sample_frame"] =
+        json!(6);
+    document["outputs"]["events"]["events"]["events"][3]["payload"]["payload"]["sample_time"] =
+        json!(3.);
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][2]["Data"]["rigid_body"]
+        ["linear_velocity"] = json!({"x": 6., "y": 8., "z": 24.});
     document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][6]["Data"]["rigid_body"]
         ["linear_velocity"] = json!({"x": 0., "y": 20., "z": 21.});
     document["outputs"]["events"]["events"]["events"][4]["payload"]["payload"]["sample_frame"] =
@@ -692,10 +692,32 @@ fn outgoing_samples_are_shared_by_simultaneous_touchers_and_bound_by_play_end() 
     document["outputs"]["events"]["events"]["events"][4]["payload"]["payload"]["sample_time"] =
         json!(5.5);
     let measured = row(document.clone());
-    assert_eq!(measured["features"]["first_touch_outgoing_ball_speed"], 29.);
-    assert!(measured["features"]["second_touch_outgoing_ball_speed"].is_null());
+    assert_eq!(measured["features"]["candidate_outgoing_ball_speed"], 26.);
+    assert_eq!(measured["features"]["first_touch_outgoing_ball_speed"], 13.);
+    assert_eq!(
+        measured["features"]["second_touch_outgoing_ball_speed"],
+        13.
+    );
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    assert_eq!(row(document), measured);
+}
+
+#[test]
+fn missing_contact_velocity_stays_null_when_classification_velocity_is_available() {
+    let mut document = fixture();
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][2]["Data"]["rigid_body"]
+        ["linear_velocity"] = Value::Null;
+    assert!(row(document)["features"]["candidate_outgoing_ball_speed"].is_null());
+}
+
+#[test]
+fn delayed_classification_still_requires_valid_native_sampling_metadata() {
+    let mut document = fixture();
     document["outputs"]["events"]["events"]["events"][3]["payload"]["payload"]["sample_frame"] =
-        json!(5);
+        json!(6);
     document["outputs"]["events"]["events"]["events"][3]["payload"]["payload"]["sample_time"] =
         json!(2.5);
     let analysis = serde_json::from_value(document).unwrap();

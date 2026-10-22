@@ -188,11 +188,7 @@ impl<'a> Context<'a> {
         })
     }
 
-    pub(crate) fn touch_sample(
-        &self,
-        touch: &Event,
-        play_end: f64,
-    ) -> Result<Option<usize>, String> {
+    pub(crate) fn validate_touch_sample(&self, touch: &Event) -> Result<(), String> {
         let frame = touch.frame("sample_frame")?;
         let time = touch.number("sample_time")?;
         if self
@@ -207,7 +203,7 @@ impl<'a> Context<'a> {
         {
             return Err("invalid native touch sampling frame/time".into());
         }
-        Ok((time <= play_end).then_some(frame))
+        Ok(())
     }
 
     pub(crate) fn boost_before(

@@ -87,7 +87,6 @@ fn stage_features(
     events: &[&Event],
     candidate: &Event,
     start: f64,
-    end: f64,
     values: &mut Values,
 ) -> Result<(), String> {
     let subject = candidate.participant("player")?;
@@ -144,18 +143,13 @@ fn stage_features(
             .and_then(|body| body.linear_velocity)
             .map(Vector::length),
     )?;
-    let mut sample = None;
-    for (index, event) in events.iter().enumerate() {
-        let current = context.touch_sample(event, end)?;
-        if index > 0 && sample != current {
-            return Err("simultaneous touches disagree on their native sampling frame".into());
-        }
-        sample = current;
+    for event in events {
+        context.validate_touch_sample(event)?;
     }
     values.float(
         &format!("{prefix}_outgoing_ball_speed"),
         context
-            .ball(sample)
+            .ball(frame)
             .and_then(|body| body.linear_velocity)
             .map(Vector::length),
     )?;
@@ -449,12 +443,11 @@ impl<'a> ReplayContext<'a> {
         let first = later.first().copied().unwrap_or(&[]);
         let second = later.get(1).copied().unwrap_or(&[]);
         let before = context.previous_frame(frame, play_start);
-        let outgoing_frame = context.touch_sample(touch, play_end)?;
         let mut samples = Samples {
             play_start,
             play_end,
             before_frame: before,
-            outgoing_sample_frame: outgoing_frame,
+            outgoing_sample_frame: Some(frame),
             closest_opponent_id: None,
             previous_touch: stage(previous)?,
             first_touch: stage(first)?,
@@ -467,15 +460,7 @@ impl<'a> ReplayContext<'a> {
             ("first_touch", first),
             ("second_touch", second),
         ] {
-            stage_features(
-                context,
-                prefix,
-                events,
-                touch,
-                play_start,
-                play_end,
-                &mut values,
-            )?;
+            stage_features(context, prefix, events, touch, play_start, &mut values)?;
         }
         subject_state_features(context, touch, &samples, &mut values)?;
         samples.closest_opponent_id =
