@@ -126,7 +126,7 @@ def run(engine, *args, document=None):
     )
 
 
-def model(path, names):
+def model(path, names, flag_name, missing_name):
     inputs = [
         helper.make_tensor_value_info("features", TensorProto.FLOAT, [None, len(names)])
     ]
@@ -135,13 +135,13 @@ def model(path, names):
     ]
     initializers = [
         helper.make_tensor(
-            "role_index", TensorProto.INT64, [1], [names.index("p_is_initiator")]
+            "role_index", TensorProto.INT64, [1], [names.index(flag_name)]
         ),
         helper.make_tensor(
             "missing_index",
             TensorProto.INT64,
             [1],
-            [names.index("p_velocity_delta_up")],
+            [names.index(missing_name)],
         ),
         helper.make_tensor("one", TensorProto.FLOAT, [1], [1]),
     ]
@@ -190,7 +190,7 @@ def test_same_rows_are_reviewed_prepared_and_scored(
         for key in ("name", "schema_version", "status", "revision", "replay_sha256")
     }
     events["events"] = document["outputs"]["events"]["events"]["events"]
-    batch = run(engine, "candidates", document=events)[0]
+    batch = run(engine, "candidates", "bumping_teammate", document=events)[0]
     assert len(batch["candidates"]) == 2
     assert len(batch["feature_names"]) == 8
     assert "sampling" not in batch and "feature_definitions" not in batch
@@ -259,7 +259,12 @@ def test_same_rows_are_reviewed_prepared_and_scored(
         names = ["p_velocity_delta_up", "p_is_initiator"]
         contract = select_features(contract, names, subset_schema)
         selection = {"feature_names": names, "input_schema": subset_schema}
-    model(tmp_path / "model.onnx", contract["feature_names"])
+    model(
+        tmp_path / "model.onnx",
+        contract["feature_names"],
+        "p_is_initiator",
+        "p_velocity_delta_up",
+    )
     (tmp_path / "evaluation.json").write_text("{}")
     entry = model_entry(
         tmp_path,
@@ -298,3 +303,82 @@ def test_same_rows_are_reviewed_prepared_and_scored(
     write_manifest(tmp_path, "test", [entry])
     with pytest.raises(subprocess.CalledProcessError):
         run(engine, "score", tmp_path, "bumping_teammate", "test", document=document)
+
+
+def test_bang_context_models_use_the_shared_join_export_and_scorer(
+    engine, combined_analysis, tmp_path
+):
+    from training.bang_dataset import prepare as prepare_bang
+    from training.bang_features import compute as compute_bang
+
+    extracted = tmp_path / "features.parquet"
+    compute_bang(
+        [combined_analysis], engine, ROOT / "examples/bang_sampling.json", extracted
+    )
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(extracted)
+    reviews = []
+    for index, row in enumerate(table.to_pylist()):
+        reviews.append(
+            {
+                "kind": "bang_with_time",
+                "replay_sha256": row["replay_sha256"],
+                "frame": row["frame"],
+                "touch_id": row["touch_id"],
+                "player_id": json.loads(row["player_id"]),
+                "raw_time": row["raw_time"],
+                "engine_revision": row["engine_revision"],
+                "label": index % 2,
+            }
+        )
+    annotations = tmp_path / "reviews.json"
+    annotations.write_text(json.dumps({"schema_version": 1, "annotations": reviews}))
+    training_table = tmp_path / "labeled.parquet"
+    prepare_bang(extracted, annotations, training_table)
+    prepared, source_contract = load(training_table)
+    names = ["second_touch_outgoing_ball_speed", "candidate_dodging"]
+    contract = select_features(
+        source_contract, names, "bang_with_time.context.v1.outcome.v1"
+    )
+    features, _, _ = arrays(prepared, contract)
+    model(
+        tmp_path / "model.onnx",
+        names,
+        "candidate_dodging",
+        "second_touch_outgoing_ball_speed",
+    )
+    (tmp_path / "evaluation.json").write_text("{}")
+    entry = model_entry(
+        tmp_path,
+        training_table,
+        version="test",
+        model_file="model.onnx",
+        evaluation_file="evaluation.json",
+        keep_threshold=0.5,
+        source_revision="fixture",
+        status="experimental",
+        feature_names=names,
+        input_schema=contract["input_schema"],
+    )
+    write_manifest(tmp_path, "test", [entry])
+    document = json.loads(combined_analysis.read_text())
+    result = run(engine, "score", tmp_path, "bang_with_time", "test", document=document)
+    expected = (1 - features[:, 1]) * np.isnan(features[:, 0])
+    np.testing.assert_array_equal(
+        [row["score"] for row in result["predictions"]], expected
+    )
+    assert result["model_feature_names"] == names
+    assert result["sampling"] == {"method": "native_touch_stages"}
+    assert [
+        row["candidate"]["evidence"]["touch_id"] for row in result["predictions"]
+    ] == table["touch_id"].to_pylist()
+    entry["sampling"] = {"method": "first_acceleration_peak_then_minimum"}
+    write_manifest(tmp_path, "test", [entry])
+    rejected = subprocess.run(
+        [str(engine), "score", str(tmp_path), "bang_with_time", "test"],
+        input=combined_analysis.read_bytes(),
+        capture_output=True,
+    )
+    assert rejected.returncode == 1
+    assert b"sampling method" in rejected.stderr

@@ -13,18 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLING = ROOT / "examples/bump_sampling.json"
 
 
-@pytest.fixture(scope="module")
-def combined_analysis(engine, tmp_path_factory):
-    path = tmp_path_factory.mktemp("bump-features") / "sample.json"
-    with path.open("wb") as output:
-        subprocess.run(
-            [str(engine), "extract", str(ROOT / "tests/fixtures/sample.replay")],
-            stdout=output,
-            check=True,
-        )
-    return path
-
-
 def test_feature_table_preserves_types_subjects_sampling_and_nulls(
     engine, combined_analysis, tmp_path
 ):

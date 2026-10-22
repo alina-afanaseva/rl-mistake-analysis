@@ -1,0 +1,737 @@
+use rl_mistake_analysis_candidates::bang_features::{
+    FeatureBatch, FeatureSampling, ReplayAnalysis, SamplingMethod, extract,
+};
+use serde_json::{Value, json};
+
+fn event(id: &str, stream: &str, payload: Value) -> Value {
+    let kind = if stream == "air_dribble" {
+        "ball_carry"
+    } else {
+        stream
+    };
+    json!({"meta": {"id": id, "stream": stream}, "payload": {"kind": kind, "payload": payload}})
+}
+
+fn body(x: f64, y: f64, z: f64) -> Value {
+    json!({"location": {"x": x, "y": y, "z": z}, "rotation": {"x": 0, "y": 0, "z": 0, "w": 2}, "linear_velocity": {"x": 3, "y": 4, "z": 12}})
+}
+
+fn touch(id: u64, frame: usize, player: u64, team: bool, tags: Value) -> Value {
+    event(
+        &format!("touch:{id}"),
+        "touch",
+        json!({"touch_id": id, "frame": frame,
+        "time": frame as f64 / 2., "sample_frame": frame, "sample_time": frame as f64 / 2.,
+        "player": {"Steam": player}, "is_team_0": team, "tags": tags}),
+    )
+}
+
+fn activity(player: u64, team: bool, state: &str, start: usize, end: usize) -> Value {
+    event(
+        &format!("activity:{player}:{start}"),
+        "player_activity",
+        json!({"player": {"Steam": player}, "is_team_0": team, "state": state,
+            "frame": start, "end_frame": end, "time": start as f64 / 2., "end_time": end as f64 / 2.}),
+    )
+}
+
+fn fixture() -> Value {
+    let players = (1..=4)
+        .map(|id| {
+            let frames = (0..14)
+                .map(|frame| {
+                    let rigid_body = match id {
+                        1 => body(frame as f64 * 2., frame as f64 * 3., 10.),
+                        2 => body(0., 20., 201.),
+                        3 => body(8., 20., 111.),
+                        _ => body(-5., 20., 101.),
+                    };
+                    json!({"Data": {"rigid_body": rigid_body, "dodge_active": false, "boost_amount": id as f64 * 51.}})
+                })
+                .collect::<Vec<_>>();
+            json!([{"Steam": id}, {"frames": frames}])
+        })
+        .collect::<Vec<_>>();
+    let ball = (0..14).map(|frame| json!({"Data": {"rigid_body": body(frame as f64 * 10., frame as f64 * 20., 100. + frame as f64)}})).collect::<Vec<_>>();
+    let mut candidate = touch(
+        1,
+        2,
+        1,
+        true,
+        json!([{"group": "action", "value": "clear"}, {"group": "dodge_state", "value": "dodge"}]),
+    );
+    candidate["payload"]["payload"]["sample_frame"] = json!(3);
+    candidate["payload"]["payload"]["sample_time"] = json!(1.5);
+    let mut events = vec![
+        touch(0, 0, 2, true, json!([])),
+        candidate,
+        touch(
+            2,
+            5,
+            2,
+            true,
+            json!([{"group": "action", "value": "pass"}, {"group": "contested", "value": "contested"}]),
+        ),
+        touch(
+            3,
+            5,
+            3,
+            false,
+            json!([{"group": "action", "value": "shot"}, {"group": "possession", "value": "control"}, {"group": "contested", "value": "contested"}]),
+        ),
+        touch(
+            4,
+            7,
+            1,
+            true,
+            json!([{"group": "dodge_state", "value": "no_dodge"}]),
+        ),
+        event(
+            "possession:0",
+            "possession",
+            json!({"frame": 0, "end_frame": 4, "time": 0., "end_time": 2., "active": true, "possession_state": "team_zero"}),
+        ),
+        event(
+            "possession:1",
+            "possession",
+            json!({"frame": 4, "end_frame": 13, "time": 2., "end_time": 6.5, "active": true, "possession_state": "team_one"}),
+        ),
+        event(
+            "goal:10",
+            "goal_context",
+            json!({"frame": 10, "time": 5., "scoring_team_is_team_0": false}),
+        ),
+        event(
+            "beaten:2",
+            "beaten_to_ball",
+            json!({"frame": 2, "time": 1., "player": {"Steam": 3}, "winner": {"Steam": 1}, "is_team_0": false}),
+        ),
+        event(
+            "beaten:6",
+            "beaten_to_ball",
+            json!({"frame": 6, "time": 3., "player": {"Steam": 1}, "winner": {"Steam": 3}, "is_team_0": true}),
+        ),
+        event(
+            "whiff:4",
+            "whiff",
+            json!({"frame": 4, "time": 2., "resolved_time": 3., "kind": "whiff", "player": {"Steam": 3}, "is_team_0": false}),
+        ),
+        event(
+            "carry:0",
+            "ball_carry",
+            json!({"player_id": {"Steam": 1}, "start_time": 0.5, "end_time": 1.}),
+        ),
+        event(
+            "pass:0",
+            "pass",
+            json!({"receiver": {"Steam": 1}, "start_time": 0.5, "time": 1.}),
+        ),
+    ];
+    for id in 1..=4 {
+        events.push(activity(id, id != 3, "tracked", 0, 13));
+    }
+    json!({"name": "subtr-actor", "schema_version": 1, "status": "ok", "revision": "fixture", "replay_sha256": "0".repeat(64), "outputs": {
+        "events": {"replay_meta": {"team_zero": [{"remote_id": {"Steam": 1}}, {"remote_id": {"Steam": 2}}, {"remote_id": {"Steam": 4}}], "team_one": [{"remote_id": {"Steam": 3}}]}, "events": {"events": events}, "accumulation_tracks": (1..=4).map(|id| json!({"player_id": {"Steam": id}, "quantity": "boost_amount", "points": [{"frame": 0, "value": id as f64 * 51.}]})).collect::<Vec<_>>()},
+        "replay_data": {"frame_data": {"players": players, "ball_data": {"frames": ball}, "metadata_frames": (0..14).map(|frame| json!({"time": frame as f64 / 2.})).collect::<Vec<_>>()}, "boost_pad_events": [], "boost_pads": []}
+    }})
+}
+
+fn add_opponent(document: &mut Value, id: u64, rigid_body: Value, boost: f64) {
+    let players = document["outputs"]["replay_data"]["frame_data"]["players"]
+        .as_array_mut()
+        .unwrap();
+    let mut player = players[2].clone();
+    player[0] = json!({"Steam": id});
+    for frame in player[1]["frames"].as_array_mut().unwrap() {
+        frame["Data"]["rigid_body"] = rigid_body.clone();
+        frame["Data"]["boost_amount"] = json!(boost);
+    }
+    players.push(player);
+    document["outputs"]["events"]["accumulation_tracks"].as_array_mut().unwrap().push(json!({"player_id": {"Steam": id}, "quantity": "boost_amount", "points": [{"frame": 0, "value": boost}]}));
+    document["outputs"]["events"]["replay_meta"]["team_one"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"remote_id": {"Steam": id}}));
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(activity(id, false, "tracked", 0, 13));
+}
+
+fn batch(document: Value) -> FeatureBatch {
+    let analysis: ReplayAnalysis = serde_json::from_value(document).unwrap();
+    let (candidates, features) = extract(
+        &analysis,
+        FeatureSampling {
+            method: SamplingMethod::NativeTouchStages,
+        },
+        Some(&json!({"Steam": 1})),
+    )
+    .unwrap();
+    assert_eq!(candidates.candidates.len(), features.rows.len());
+    for (candidate, row) in candidates.candidates.iter().zip(&features.rows) {
+        assert_eq!(
+            candidate.source_event_ids.as_slice(),
+            std::slice::from_ref(&row.source_event_id)
+        );
+        assert_eq!(candidate.player_id, row.player_id);
+        assert_eq!(candidate.frame, row.frame as u64);
+    }
+    features
+}
+
+fn row(document: Value) -> Value {
+    serde_json::to_value(batch(document)).unwrap()["rows"][0].clone()
+}
+
+#[test]
+fn native_stages_preserve_simultaneous_touches_and_candidate_provenance() {
+    let row = row(fixture());
+    assert_eq!(row["touch_id"], 1);
+    assert_eq!(row["samples"]["outgoing_sample_frame"], 3);
+    assert_eq!(row["samples"]["first_touch"]["touch_ids"], json!([2, 3]));
+    assert_eq!(row["samples"]["second_touch"]["touch_ids"], json!([4]));
+    let f = &row["features"];
+    for name in [
+        "first_touch_teammate",
+        "first_touch_opponent",
+        "second_touch_self",
+        "first_touch_action_pass",
+        "first_touch_action_shot",
+        "second_touch_action_unclassified",
+        "first_touch_opponent_control",
+        "candidate_action_clear",
+        "candidate_dodging",
+        "ground_carry_before",
+        "receiving_pass_before",
+        "opponent_beaten_at_candidate",
+        "subject_beaten_during_exchange",
+        "opponent_whiff_during_exchange",
+        "next_goal_opponent",
+        "next_possession_opponent",
+    ] {
+        assert_eq!(f[name], true, "{name}");
+    }
+    for (name, value) in [
+        ("candidate_incoming_ball_speed", 13.),
+        ("candidate_outgoing_ball_speed", 13.),
+        ("closest_opponent_position_relative_ball_toward", 0.),
+        ("closest_opponent_position_relative_ball_side", 2.),
+        ("closest_opponent_position_relative_ball_up", 10.),
+        ("closest_opponent_heading_toward", 0.),
+        ("closest_opponent_heading_side", -1.),
+        ("closest_opponent_heading_up", 0.),
+        ("closest_opponent_velocity_relative_ball_toward", 0.),
+        ("closest_opponent_velocity_relative_ball_side", 0.),
+        ("closest_opponent_velocity_relative_ball_up", 0.),
+        ("closest_opponent_boost_before_pct", 60.),
+        ("approaching_teammate_count", 1.),
+        ("approaching_opponent_count", 0.),
+        ("candidate_ball_position_toward", 40.),
+        ("candidate_ball_position_side", -20.),
+        ("candidate_ball_position_up", 102.),
+        ("first_touch_ball_position_toward", 100.),
+        ("second_touch_ball_position_up", 107.),
+        ("previous_touch_delay_s", 1.),
+        ("first_touch_delay_s", 1.5),
+        ("second_touch_delay_s", 2.5),
+        ("next_goal_delay_s", 4.),
+        ("touches_before_next_goal", 3.),
+        ("possession_change_delay_s", 1.),
+        ("subject_next_touch_delay_s", 2.5),
+        ("subject_displacement_to_first_touch_toward", 9.),
+        ("subject_displacement_to_second_touch_side", -10.),
+        ("subject_heading_at_first_touch_toward", 0.),
+        ("subject_heading_at_first_touch_side", -1.),
+        ("subject_heading_at_first_touch_up", 0.),
+        ("subject_heading_at_second_touch_side", -1.),
+    ] {
+        assert_eq!(f[name].as_f64(), Some(value), "{name}");
+    }
+    assert_eq!(row["samples"]["closest_opponent_id"], json!({"Steam": 3}));
+    assert!(
+        (f["subject_ball_distance_at_first_touch"].as_f64().unwrap() - 17850_f64.sqrt()).abs()
+            < 0.0001
+    );
+    assert!(
+        (f["subject_ball_distance_at_second_touch"].as_f64().unwrap() - 26706_f64.sqrt()).abs()
+            < 0.0001
+    );
+}
+
+#[test]
+fn intervals_use_all_touches_and_require_a_resolved_native_whiff() {
+    let mut document = fixture();
+    document["outputs"]["events"]["events"]["events"][9]["payload"]["payload"]["winner"] =
+        json!({"Steam": 2});
+    document["outputs"]["events"]["events"]["events"][10]["payload"]["payload"]["resolved_time"] =
+        json!(4.);
+    let row = row(document);
+    assert_eq!(row["features"]["opponent_whiff_during_exchange"], false);
+    assert_eq!(row["features"]["subject_beaten_during_exchange"], true);
+    assert_eq!(row["samples"]["first_touch"]["frame"], 5);
+}
+
+#[test]
+fn goals_and_kickoffs_bound_the_exchange_and_censor_unobserved_stages() {
+    for boundary in ["goal", "kickoff"] {
+        let mut document = fixture();
+        let events = document["outputs"]["events"]["events"]["events"]
+            .as_array_mut()
+            .unwrap();
+        events[4]["payload"]["payload"]["player"] = json!({"Steam": 2});
+        if boundary == "goal" {
+            events[7]["payload"]["payload"]["time"] = json!(3.);
+            events[7]["payload"]["payload"]["frame"] = json!(6);
+        } else {
+            events.push(event(
+                "kickoff:6",
+                "kickoff",
+                json!({"start_time": 3., "live_action_start_time": 4.}),
+            ));
+        }
+        let row = row(document);
+        assert_eq!(row["samples"]["play_end"], 3.);
+        assert!(row["samples"]["second_touch"].is_null());
+        for name in [
+            "second_touch_delay_s",
+            "opponent_whiff_during_exchange",
+            "subject_beaten_during_exchange",
+            "subject_next_touch_delay_s",
+            "subject_displacement_to_second_touch_up",
+        ] {
+            assert!(row["features"][name].is_null(), "{name}");
+        }
+        if boundary == "kickoff" {
+            assert!(row["features"]["next_goal_delay_s"].is_null());
+        }
+    }
+}
+
+#[test]
+fn team_coordinates_rotate_both_ground_axes_and_keep_height() {
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    for event in events {
+        if event["meta"]["stream"] == "touch" {
+            let team = event["payload"]["payload"]["is_team_0"].as_bool().unwrap();
+            event["payload"]["payload"]["is_team_0"] = json!(!team);
+        }
+    }
+    let roster = &mut document["outputs"]["events"]["replay_meta"];
+    let zero = roster["team_zero"].take();
+    roster["team_zero"] = roster["team_one"].take();
+    roster["team_one"] = zero;
+    let row = row(document);
+    assert_eq!(row["features"]["candidate_ball_position_toward"], -40.);
+    assert_eq!(row["features"]["candidate_ball_position_side"], 20.);
+    assert_eq!(row["features"]["candidate_ball_position_up"], 102.);
+    assert_eq!(
+        row["features"]["closest_opponent_position_relative_ball_side"],
+        -2.
+    );
+    assert_eq!(
+        row["features"]["closest_opponent_position_relative_ball_up"],
+        10.
+    );
+    assert_eq!(row["features"]["closest_opponent_heading_side"], 1.);
+    assert_eq!(row["features"]["approaching_teammate_count"], 1);
+    assert_eq!(row["features"]["approaching_opponent_count"], 0);
+}
+
+#[test]
+fn missing_data_stays_null_and_a_demo_invalidates_displacement() {
+    let mut document = fixture();
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][1]["Data"]["rigid_body"]
+        ["linear_velocity"] = Value::Null;
+    document["outputs"]["replay_data"]["frame_data"]["players"][2][1]["frames"][1] = json!("Empty");
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(event(
+            "demo:6",
+            "demolition",
+            json!({"victim": {"Steam": 1}, "frame": 6, "time": 3.}),
+        ));
+    let row = row(document);
+    assert!(row["features"]["candidate_incoming_ball_speed"].is_null());
+    assert!(row["features"]["closest_opponent_heading_side"].is_null());
+    assert!(row["features"]["approaching_opponent_count"].is_null());
+    assert!(row["features"]["subject_displacement_to_first_touch_up"].is_number());
+    assert!(row["features"]["subject_displacement_to_second_touch_up"].is_null());
+    assert_eq!(row["features"]["subject_demo_during_exchange"], true);
+}
+
+#[test]
+fn stage_headings_include_pitch_and_unavailable_bodies_stay_null() {
+    let mut document = fixture();
+    document["outputs"]["replay_data"]["frame_data"]["players"][0][1]["frames"][5]["Data"]["rigid_body"]
+        ["rotation"] = json!({"x": 0, "y": -1, "z": 0, "w": 1});
+    document["outputs"]["replay_data"]["frame_data"]["players"][0][1]["frames"][7] = json!("Empty");
+    let row = row(document);
+    assert_eq!(row["features"]["subject_heading_at_first_touch_up"], 1.);
+    assert_eq!(row["features"]["subject_heading_at_first_touch_side"], 0.);
+    assert!(row["features"]["subject_heading_at_second_touch_up"].is_null());
+    assert!(row["features"]["subject_ball_distance_at_second_touch"].is_null());
+    assert!(row["features"]["subject_displacement_to_second_touch_up"].is_null());
+}
+
+#[test]
+fn a_demo_in_the_candidate_frame_is_retained_without_ordering_it() {
+    let mut document = fixture();
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(event(
+            "demo:2",
+            "demolition",
+            json!({"victim": {"Steam": 1}, "frame": 2, "time": 1.}),
+        ));
+    let row = row(document);
+    assert_eq!(row["features"]["subject_demo_during_exchange"], true);
+    assert!(row["features"]["subject_displacement_to_first_touch_up"].is_null());
+}
+
+#[test]
+fn nearest_opponent_profile_comes_from_one_car_and_uses_3d_distance() {
+    let mut document = fixture();
+    let mut far = body(10., 20., 1000.);
+    far["rotation"] = json!({"x": 0, "y": 1, "z": 0, "w": 1});
+    far["linear_velocity"] = json!({"x": 500., "y": 500., "z": -100.});
+    add_opponent(&mut document, 5, far, 255.);
+    let row = row(document);
+    assert_eq!(row["samples"]["closest_opponent_id"], json!({"Steam": 3}));
+    assert_eq!(
+        row["features"]["closest_opponent_position_relative_ball_up"],
+        10.
+    );
+    assert_eq!(row["features"]["closest_opponent_heading_side"], -1.);
+    assert_eq!(
+        row["features"]["closest_opponent_velocity_relative_ball_up"],
+        0.
+    );
+    assert_eq!(row["features"]["closest_opponent_boost_before_pct"], 60.);
+    assert_eq!(row["features"]["approaching_opponent_count"], 1);
+}
+
+#[test]
+fn approaching_counts_use_every_cars_own_3d_velocity_regardless_of_heading() {
+    let mut document = fixture();
+    let mut far = body(10., 20., 201.);
+    far["linear_velocity"] = json!({"x": 0., "y": 0., "z": -2.});
+    add_opponent(&mut document, 5, far, 255.);
+    let frames = &mut document["outputs"]["replay_data"]["frame_data"];
+    frames["ball_data"]["frames"][1]["Data"]["rigid_body"]["linear_velocity"] =
+        json!({"x": 1000., "y": 0., "z": 1000.});
+    for (index, velocity) in [
+        (0, json!({"x": 1000., "y": 1000., "z": 1000.})),
+        (1, json!({"x": 0., "y": 0., "z": -1.})),
+        (2, json!({"x": 0., "y": 0., "z": 0.})),
+        (3, json!({"x": 0., "y": 1., "z": 0.})),
+    ] {
+        frames["players"][index][1]["frames"][1]["Data"]["rigid_body"]["linear_velocity"] =
+            velocity;
+        frames["players"][index][1]["frames"][1]["Data"]["rigid_body"]["rotation"] =
+            json!({"x": 0, "y": 0, "z": 1, "w": 0});
+    }
+    let row = row(document);
+    assert_eq!(row["features"]["approaching_teammate_count"], 1);
+    assert_eq!(row["features"]["approaching_opponent_count"], 1);
+    assert_eq!(row["features"]["closest_opponent_heading_side"], 1.);
+    assert_eq!(
+        row["features"]["closest_opponent_velocity_relative_ball_side"],
+        1000.
+    );
+    assert_eq!(
+        row["features"]["closest_opponent_velocity_relative_ball_up"],
+        -1000.
+    );
+}
+
+#[test]
+fn solo_players_have_zero_approaching_teammates() {
+    let mut document = fixture();
+    document["outputs"]["events"]["replay_meta"]["team_zero"] =
+        json!([{"remote_id": {"Steam": 1}}]);
+    document["outputs"]["replay_data"]["frame_data"]["players"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|player| player[0]["Steam"] != 2 && player[0]["Steam"] != 4);
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|event| {
+            event["meta"]["stream"] != "touch"
+                || event["payload"]["payload"]["player"]["Steam"] != 2
+        });
+    let row = row(document);
+    assert_eq!(row["features"]["approaching_teammate_count"], 0);
+    assert_eq!(row["samples"]["closest_opponent_id"], json!({"Steam": 3}));
+}
+
+#[test]
+fn demolition_activity_excludes_cars_until_native_respawn() {
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    events.retain(|event| {
+        event["meta"]["stream"] != "player_activity"
+            || event["payload"]["payload"]["player"]["Steam"] != 3
+    });
+    events.push(activity(3, false, "demolished", 0, 1));
+    events.push(activity(3, false, "tracked", 1, 13));
+    for event in events.iter_mut().filter(|event| {
+        event["meta"]["stream"] == "player_activity"
+            && event["payload"]["payload"]["player"]["Steam"] == 4
+    }) {
+        event["payload"]["payload"]["state"] = json!("demolished");
+    }
+    let rows = serde_json::to_value(batch(document)).unwrap()["rows"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(rows[0]["samples"]["closest_opponent_id"].is_null());
+    assert!(rows[0]["features"]["closest_opponent_position_relative_ball_side"].is_null());
+    assert_eq!(rows[0]["features"]["approaching_opponent_count"], 0);
+    assert_eq!(rows[0]["features"]["approaching_teammate_count"], 0);
+    assert_eq!(
+        rows.last().unwrap()["samples"]["closest_opponent_id"],
+        json!({"Steam": 3})
+    );
+}
+
+#[test]
+fn missing_nearest_velocity_or_boost_does_not_select_another_opponent() {
+    let mut document = fixture();
+    add_opponent(&mut document, 5, body(100., 200., 300.), 255.);
+    let nearest =
+        &mut document["outputs"]["replay_data"]["frame_data"]["players"][2][1]["frames"][1]["Data"];
+    nearest["rigid_body"]["linear_velocity"] = Value::Null;
+    document["outputs"]["events"]["accumulation_tracks"][2]["points"] = json!([]);
+    let row = row(document);
+    assert_eq!(row["samples"]["closest_opponent_id"], json!({"Steam": 3}));
+    assert_eq!(
+        row["features"]["closest_opponent_position_relative_ball_side"],
+        2.
+    );
+    assert_eq!(row["features"]["closest_opponent_heading_side"], -1.);
+    assert!(row["features"]["closest_opponent_velocity_relative_ball_side"].is_null());
+    assert!(row["features"]["closest_opponent_boost_before_pct"].is_null());
+    assert!(row["features"]["approaching_opponent_count"].is_null());
+    assert_eq!(row["features"]["approaching_teammate_count"], 1);
+}
+
+#[test]
+fn missing_subject_heading_does_not_affect_surrounding_features() {
+    let mut document = fixture();
+    document["outputs"]["replay_data"]["frame_data"]["players"][0][1]["frames"][1] = json!("Empty");
+    let row = row(document);
+    assert_eq!(row["features"]["closest_opponent_heading_side"], -1.);
+    assert_eq!(row["features"]["approaching_teammate_count"], 1);
+}
+
+#[test]
+fn missing_activity_does_not_treat_a_car_as_demolished() {
+    let mut document = fixture();
+    add_opponent(&mut document, 5, body(100., 200., 300.), 255.);
+    document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|event| {
+            event["meta"]["stream"] != "player_activity"
+                || event["payload"]["payload"]["player"]["Steam"] != 3
+        });
+    let row = row(document);
+    assert!(row["samples"]["closest_opponent_id"].is_null());
+    assert!(row["features"]["closest_opponent_heading_side"].is_null());
+    assert!(row["features"]["approaching_opponent_count"].is_null());
+    assert_eq!(row["features"]["approaching_teammate_count"], 1);
+}
+
+#[test]
+fn missing_ball_velocity_does_not_change_approaching_counts() {
+    let mut document = fixture();
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][1]["Data"]["rigid_body"]
+        ["linear_velocity"] = Value::Null;
+    let row = row(document);
+    assert_eq!(row["features"]["approaching_teammate_count"], 1);
+    assert_eq!(row["features"]["approaching_opponent_count"], 0);
+    assert!(row["features"]["closest_opponent_velocity_relative_ball_up"].is_null());
+    assert_eq!(row["features"]["closest_opponent_heading_side"], -1.);
+}
+
+#[test]
+fn tied_opponents_use_stable_player_identity_instead_of_input_order() {
+    let mut document = fixture();
+    add_opponent(&mut document, 5, body(8., 20., 111.), 255.);
+    document["outputs"]["replay_data"]["frame_data"]["players"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    let row = row(document);
+    assert_eq!(row["samples"]["closest_opponent_id"], json!({"Steam": 3}));
+    assert_eq!(row["features"]["closest_opponent_boost_before_pct"], 60.);
+}
+
+#[test]
+fn malformed_rosters_clocks_and_tags_fail_explicitly() {
+    for change in ["roster", "time", "sample", "dodge", "boost", "activity"] {
+        let mut document = fixture();
+        match change {
+            "roster" => {
+                document["outputs"]["events"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("replay_meta");
+            }
+            "time" => {
+                document["outputs"]["events"]["events"]["events"][1]["payload"]["payload"]["time"] =
+                    json!(1.001)
+            }
+            "sample" => {
+                document["outputs"]["events"]["events"]["events"][1]["payload"]["payload"]["sample_frame"] =
+                    json!(1000)
+            }
+            "dodge" => {
+                document["outputs"]["events"]["events"]["events"][1]["payload"]["payload"]["tags"]
+                    [1]["value"] = json!("invalid")
+            }
+            "boost" => {
+                document["outputs"]["events"]["accumulation_tracks"][2]["points"][0]["value"] =
+                    json!(256.);
+            }
+            _ => {
+                document["outputs"]["events"]["events"]["events"][14]["payload"]["payload"]["state"] =
+                    json!("unknown");
+            }
+        }
+        let analysis = serde_json::from_value(document).unwrap();
+        assert!(
+            extract(
+                &analysis,
+                FeatureSampling {
+                    method: SamplingMethod::NativeTouchStages
+                },
+                Some(&json!({"Steam": 1}))
+            )
+            .is_err(),
+            "{change}"
+        );
+    }
+}
+
+#[test]
+fn stage_categories_use_the_judged_player_and_native_transition_times() {
+    let mut document = fixture();
+    let events = document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap();
+    for (stream, state, start, end) in [
+        ("field_half", "defensive", 0., 1.),
+        ("field_half", "offensive", 1., 6.5),
+        ("depth_role", "most_back", 0., 6.5),
+        ("ball_depth", "ahead_of_ball", 0., 2.25),
+        ("ball_depth", "behind_ball", 2.25, 3.25),
+        ("ball_depth", "level_with_ball", 3.25, 6.5),
+    ] {
+        events.push(event(
+            &format!("{stream}:{start}"),
+            stream,
+            json!({"player": {"Steam": 1}, "time": start, "end_time": end, "state": state}),
+        ));
+    }
+    events.push(event(
+        "movement:subject",
+        "movement",
+        json!({"player": {"Steam": 1}, "frame": 0, "end_frame": 13, "height_band": "low_air"}),
+    ));
+    events.push(event(
+        "other-depth",
+        "ball_depth",
+        json!({"player": {"Steam": 2}, "time": 0., "end_time": 6.5, "state": "ahead_of_ball"}),
+    ));
+    let row = row(document);
+    for name in [
+        "subject_depth_role_at_candidate_most_back",
+        "subject_height_band_at_candidate_low_air",
+        "subject_ball_depth_at_candidate_ahead_of_ball",
+        "subject_ball_depth_at_second_touch_level_with_ball",
+    ] {
+        assert_eq!(row["features"][name], true, "{name}");
+    }
+    assert_eq!(
+        row["features"]["subject_field_half_at_candidate_offensive"],
+        false
+    );
+    assert_eq!(
+        row["features"]["subject_ball_depth_at_first_touch_ahead_of_ball"],
+        false
+    );
+    assert_eq!(
+        row["features"]["subject_ball_depth_at_first_touch_level_with_ball"],
+        false
+    );
+}
+
+#[test]
+fn outgoing_samples_are_shared_by_simultaneous_touchers_and_bound_by_play_end() {
+    let mut document = fixture();
+    for index in [2, 3] {
+        document["outputs"]["events"]["events"]["events"][index]["payload"]["payload"]["sample_frame"] =
+            json!(6);
+        document["outputs"]["events"]["events"]["events"][index]["payload"]["payload"]["sample_time"] =
+            json!(3.);
+    }
+    document["outputs"]["replay_data"]["frame_data"]["ball_data"]["frames"][6]["Data"]["rigid_body"]
+        ["linear_velocity"] = json!({"x": 0., "y": 20., "z": 21.});
+    document["outputs"]["events"]["events"]["events"][4]["payload"]["payload"]["sample_frame"] =
+        json!(11);
+    document["outputs"]["events"]["events"]["events"][4]["payload"]["payload"]["sample_time"] =
+        json!(5.5);
+    let measured = row(document.clone());
+    assert_eq!(measured["features"]["first_touch_outgoing_ball_speed"], 29.);
+    assert!(measured["features"]["second_touch_outgoing_ball_speed"].is_null());
+    document["outputs"]["events"]["events"]["events"][3]["payload"]["payload"]["sample_frame"] =
+        json!(5);
+    document["outputs"]["events"]["events"]["events"][3]["payload"]["payload"]["sample_time"] =
+        json!(2.5);
+    let analysis = serde_json::from_value(document).unwrap();
+    assert!(
+        extract(
+            &analysis,
+            FeatureSampling {
+                method: SamplingMethod::NativeTouchStages
+            },
+            Some(&json!({"Steam": 1}))
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn boost_tracks_and_carry_episodes_are_independent_measurements() {
+    for (stream, ground, air) in [("ball_carry", true, false), ("air_dribble", false, true)] {
+        let mut document = fixture();
+        document["outputs"]["events"]["events"]["events"][11] = event(
+            "carry",
+            stream,
+            json!({"player_id": {"Steam": 1}, "start_time": 0.5, "end_time": 1.}),
+        );
+        document["outputs"]["events"]["accumulation_tracks"][0]["points"] = json!([
+            {"frame": 0, "value": 0.}, {"frame": 1, "value": 127.5}, {"frame": 2, "value": 255.}
+        ]);
+        document["outputs"]["replay_data"]["frame_data"]["players"][0][1]["frames"][1]["Data"]["boost_amount"] =
+            json!(0.);
+        let measured = row(document);
+        assert_eq!(measured["features"]["subject_boost_before_pct"], 50.);
+        assert_eq!(
+            measured["features"]["closest_opponent_boost_before_pct"],
+            60.
+        );
+        assert_eq!(measured["features"]["ground_carry_before"], ground);
+        assert_eq!(measured["features"]["air_dribble_before"], air);
+    }
+}

@@ -71,7 +71,9 @@ def dataset(document, candidates):
 def extracted(engine):
     facts = run(engine, "events", ROOT / "tests/fixtures/sample.replay").stdout
     document = json.loads(facts)
-    batch = json.loads(run(engine, "candidates", document=facts).stdout)[0]
+    batch = json.loads(
+        run(engine, "candidates", "bumping_teammate", document=facts).stdout
+    )[0]
     return document, batch
 
 
@@ -94,7 +96,10 @@ def prepared_inputs(tmp_path, extracted):
 def test_synthetic_contact_preserves_identity_and_features(engine):
     batches = json.loads(
         run(
-            engine, "candidates", document=(ROOT / "examples/bump.json").read_text()
+            engine,
+            "candidates",
+            "bumping_teammate",
+            document=(ROOT / "examples/bump.json").read_text(),
         ).stdout
     )
     candidate = batches[0]["candidates"][0]
@@ -177,7 +182,12 @@ def test_combined_export_preserves_events_frames_and_boost(
         assert body["linear_velocity"] is not None
     assert (
         json.loads(
-            run(engine, "candidates", document=json.dumps(combined_export)).stdout
+            run(
+                engine,
+                "candidates",
+                "bumping_teammate",
+                document=json.dumps(combined_export),
+            ).stdout
         )[0]
         == batch
     )
@@ -239,7 +249,7 @@ def test_combined_input_requires_events_output(engine, combined_export):
     document = copy.deepcopy(combined_export)
     del document["outputs"]["events"]
     result = subprocess.run(
-        [str(engine), "candidates"],
+        [str(engine), "candidates", "bumping_teammate"],
         input=json.dumps(document),
         text=True,
         capture_output=True,
@@ -262,7 +272,7 @@ def test_invalid_candidate_inputs_fail(engine, mutation):
     else:
         document["events"][0]["payload"]["payload"]["victim_is_team_0"] = False
     with pytest.raises(subprocess.CalledProcessError):
-        run(engine, "candidates", document=json.dumps(document))
+        run(engine, "candidates", "bumping_teammate", document=json.dumps(document))
 
 
 def test_preparation_preserves_labels_and_uses_shared_features(
@@ -342,7 +352,9 @@ def test_annotation_contract_rejects_invalid_imports(engine, prepared_inputs, mu
 def test_native_preparation_rejects_victim_before_reading_replay(engine, tmp_path):
     document = json.loads((ROOT / "examples/bump.json").read_text())
     candidates = json.loads(
-        run(engine, "candidates", document=json.dumps(document)).stdout
+        run(
+            engine, "candidates", "bumping_teammate", document=json.dumps(document)
+        ).stdout
     )[0]
     review = annotation(document, candidates["candidates"][1])
     path = tmp_path / "annotations.json"
@@ -564,7 +576,9 @@ def test_candidate_retains_complete_supplier_payload(engine):
     document = json.loads((ROOT / "examples/bump.json").read_text())
     payload = document["events"][0]["payload"]["payload"]
     payload["additional_context"] = {"ball_position": [0, 200, 300]}
-    batch = json.loads(run(engine, "candidates", document=json.dumps(document)).stdout)[
-        0
-    ]
+    batch = json.loads(
+        run(
+            engine, "candidates", "bumping_teammate", document=json.dumps(document)
+        ).stdout
+    )[0]
     assert batch["candidates"][0]["evidence"] == payload

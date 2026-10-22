@@ -1,5 +1,6 @@
 //! Model catalog metadata and artifact integrity checks.
 
+use rl_mistake_analysis_candidates::feature_contract;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -25,7 +26,7 @@ pub struct ModelEntry {
     pub input_schema: String,
     pub feature_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sampling: Option<rl_mistake_analysis_candidates::bump_features::FeatureSampling>,
+    pub sampling: Option<rl_mistake_analysis_candidates::feature_contract::FeatureSampling>,
     pub runtime: String,
     pub model_file: String,
     pub evaluation_file: String,
@@ -107,17 +108,15 @@ impl Manifest {
 
 impl ModelEntry {
     pub fn validate(&self) -> Result<(), String> {
-        match self.input_schema.as_str() {
-            schema
-                if rl_mistake_analysis_candidates::bump_features::supports_schema(schema)
-                    && self.sampling.is_none() =>
-            {
-                return Err("context model must declare its feature sampling".into());
-            }
-            "bumping_teammate.native.v1" if self.sampling.is_some() => {
+        if let Ok(kind) = rl_mistake_analysis_candidates::MistakeKind::parse(&self.kind) {
+            let definition = kind.definition();
+            if feature_contract::supports_schema(definition.context_schema, &self.input_schema) {
+                self.sampling
+                    .ok_or("context model must declare its feature sampling")?
+                    .validate(definition.sampling_method)?;
+            } else if self.input_schema == definition.schema && self.sampling.is_some() {
                 return Err("native model must omit context sampling".into());
             }
-            _ => {}
         }
         let mut names = HashSet::new();
         if [&self.kind, &self.version, &self.input_schema, &self.runtime]

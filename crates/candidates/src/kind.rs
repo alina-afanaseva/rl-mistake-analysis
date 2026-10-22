@@ -1,68 +1,109 @@
-use crate::bump_features::{self, FeatureDefinition, FeatureSampling};
+use crate::feature_contract::{self, FeatureDefinition, FeatureSampling, SamplingMethod};
 use crate::input::ReplayFacts;
-use crate::native_bump;
+use crate::{bang_features, bump_features};
+use crate::{native_bump, native_touch};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+pub struct KindDefinition {
+    pub name: &'static str,
+    pub schema: &'static str,
+    pub feature_names: &'static [&'static str],
+    pub context_schema: &'static str,
+    pub context_definitions: fn() -> Vec<FeatureDefinition>,
+    pub sampling_method: SamplingMethod,
+    candidates: fn(&ReplayFacts) -> Result<Vec<Candidate>, String>,
+    anchor: fn(&Candidate) -> Result<crate::annotations::IncidentAnchor, String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MistakeKind {
     BumpingTeammate,
+    BangWithTime,
 }
 
 impl MistakeKind {
-    pub const ALL: [Self; 1] = [Self::BumpingTeammate];
+    pub const ALL: [Self; 2] = [Self::BumpingTeammate, Self::BangWithTime];
 
     pub fn parse(name: &str) -> Result<Self, String> {
-        match name {
-            "bumping_teammate" => Ok(Self::BumpingTeammate),
-            _ => Err(format!("unknown mistake kind: {name}")),
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.definition().name == name)
+            .ok_or_else(|| format!("unknown mistake kind: {name}"))
+    }
+
+    pub fn definition(self) -> &'static KindDefinition {
+        match self {
+            Self::BumpingTeammate => &KindDefinition {
+                name: "bumping_teammate",
+                schema: native_bump::SCHEMA,
+                feature_names: native_bump::FEATURES,
+                context_schema: bump_features::SCHEMA,
+                context_definitions: bump_features::definitions,
+                sampling_method: SamplingMethod::FirstAccelerationPeakThenMinimum,
+                candidates: native_bump::candidates,
+                anchor: |candidate| {
+                    native_bump::validate_evidence(&candidate.evidence)?;
+                    native_bump::anchor(candidate)
+                },
+            },
+            Self::BangWithTime => &KindDefinition {
+                name: "bang_with_time",
+                schema: native_touch::SCHEMA,
+                feature_names: &[],
+                context_schema: bang_features::SCHEMA,
+                context_definitions: bang_features::definitions,
+                sampling_method: SamplingMethod::NativeTouchStages,
+                candidates: native_touch::select,
+                anchor: native_touch::anchor,
+            },
         }
     }
 
     pub fn name(self) -> &'static str {
-        match self {
-            Self::BumpingTeammate => "bumping_teammate",
-        }
+        self.definition().name
     }
 
     pub fn schema(self) -> &'static str {
-        match self {
-            Self::BumpingTeammate => native_bump::SCHEMA,
-        }
+        self.definition().schema
     }
 
     pub fn feature_names(self) -> &'static [&'static str] {
-        match self {
-            Self::BumpingTeammate => native_bump::FEATURES,
-        }
+        self.definition().feature_names
     }
 
     pub fn validate_contract(self, schema: &str, feature_names: &[String]) -> Result<(), String> {
+        let definition = self.definition();
         let compatible = match schema {
-            native_bump::SCHEMA => feature_names == self.feature_names(),
-            schema if bump_features::supports_schema(schema) => {
-                bump_features::select_definitions(feature_names)?;
+            schema if schema == definition.schema => feature_names == definition.feature_names,
+            schema if feature_contract::supports_schema(definition.context_schema, schema) => {
+                feature_contract::select_definitions(
+                    (definition.context_definitions)(),
+                    feature_names,
+                )?;
                 true
             }
             _ => false,
         };
         if !compatible {
-            return Err(format!("incompatible feature contract for {}", self.name()));
+            return Err(format!(
+                "incompatible feature contract for {}",
+                definition.name
+            ));
         }
         Ok(())
     }
 
     pub fn candidates(self, replay: &ReplayFacts) -> Result<CandidateBatch, String> {
         replay.validate()?;
-        let candidates = match self {
-            Self::BumpingTeammate => native_bump::candidates(replay)?,
-        };
+        let definition = self.definition();
+        let candidates = (definition.candidates)(replay)?;
         let batch = CandidateBatch {
-            kind: self.name().into(),
-            input_schema: self.schema().into(),
-            feature_names: self
-                .feature_names()
+            kind: definition.name.into(),
+            input_schema: definition.schema.into(),
+            feature_names: definition
+                .feature_names
                 .iter()
                 .map(|name| (*name).into())
                 .collect(),
@@ -78,6 +119,9 @@ impl MistakeKind {
 
     /// Preserve the subject convention of the eight-feature training contract.
     pub fn initiator_candidates(self, replay: &ReplayFacts) -> Result<CandidateBatch, String> {
+        if self != Self::BumpingTeammate {
+            return Err("initiator candidates require bumping_teammate".into());
+        }
         let mut batch = self.candidates(replay)?;
         batch
             .candidates
@@ -113,9 +157,9 @@ pub struct CandidateBatch {
 
 impl CandidateBatch {
     pub fn validate(&self) -> Result<(), String> {
-        let kind = MistakeKind::parse(&self.kind)?;
-        if self.input_schema != kind.schema()
-            || self.feature_names != kind.feature_names()
+        let definition = MistakeKind::parse(&self.kind)?.definition();
+        if self.input_schema != definition.schema
+            || self.feature_names != definition.feature_names
             || self.sampling.is_some()
             || !self.feature_definitions.is_empty()
         {
@@ -139,7 +183,7 @@ impl CandidateBatch {
             {
                 return Err("invalid candidate measurements or identity".into());
             }
-            native_bump::validate_evidence(&candidate.evidence)?;
+            let anchor = candidate.anchor()?;
             for (index, value) in candidate.features.iter().enumerate() {
                 if value.is_none() {
                     return Err(format!(
@@ -150,7 +194,7 @@ impl CandidateBatch {
             }
             let subject =
                 serde_json::to_string(&candidate.player_id).map_err(|error| error.to_string())?;
-            if !incidents.insert((candidate.anchor()?.key()?, subject.clone())) {
+            if !incidents.insert((anchor.key()?, subject.clone())) {
                 return Err("duplicate incident anchor".into());
             }
             let mut ids: Vec<_> = candidate.source_event_ids.iter().collect();
@@ -169,8 +213,6 @@ impl CandidateBatch {
 
 impl Candidate {
     pub fn anchor(&self) -> Result<crate::annotations::IncidentAnchor, String> {
-        match MistakeKind::parse(&self.kind)? {
-            MistakeKind::BumpingTeammate => native_bump::anchor(self),
-        }
+        (MistakeKind::parse(&self.kind)?.definition().anchor)(self)
     }
 }
