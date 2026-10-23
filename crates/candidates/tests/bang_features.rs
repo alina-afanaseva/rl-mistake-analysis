@@ -224,6 +224,48 @@ fn exchange_extrema_and_team_distances_include_every_native_frame() {
 }
 
 #[test]
+fn team_distance_mean_weights_each_native_interval_and_includes_the_hitter() {
+    let mut document = fixture();
+    let frames = &mut document["outputs"]["replay_data"]["frame_data"];
+    for (offset, time) in [1.0, 1.25, 2.25, 2.5].into_iter().enumerate() {
+        let frame = offset + 2;
+        frames["metadata_frames"][frame]["time"] = json!(time);
+        frames["ball_data"]["frames"][frame]["Data"]["rigid_body"] = body(0., 0., 0.);
+        for (player, distances) in [
+            [10., 30., 100., 20.],
+            [20., 20., 30., 200.],
+            [40., 50., 60., 70.],
+            [500., 500., 500., 500.],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            frames["players"][player][1]["frames"][frame]["Data"]["rigid_body"] =
+                body(distances[offset], 0., 0.);
+        }
+    }
+    document["outputs"]["events"]["events"]["events"][1]["payload"]["payload"]["sample_time"] =
+        json!(1.25);
+    let features = row(document)["features"].clone();
+    assert_eq!(
+        features["own_team_ball_distance_candidate_to_first_touch"],
+        10.
+    );
+    assert!(
+        (features["own_team_ball_distance_mean_candidate_to_first_touch"]
+            .as_f64()
+            .unwrap()
+            - 35. / 1.5)
+            .abs()
+            < f32::EPSILON as f64 * 35.
+    );
+    assert_eq!(
+        features["opponent_ball_distance_mean_candidate_to_first_touch"],
+        55.
+    );
+}
+
+#[test]
 fn missing_interval_observations_are_not_replaced_by_observed_minima() {
     let mut document = fixture();
     document["outputs"]["replay_data"]["frame_data"]["players"][3][1]["frames"][4] = json!("Empty");
@@ -233,6 +275,9 @@ fn missing_interval_observations_are_not_replaced_by_observed_minima() {
         "own_team_ball_distance_candidate_to_first_touch",
         "own_team_ball_distance_first_to_second_touch",
         "opponent_ball_distance_first_to_second_touch",
+        "own_team_ball_distance_mean_candidate_to_first_touch",
+        "own_team_ball_distance_mean_first_to_second_touch",
+        "opponent_ball_distance_mean_first_to_second_touch",
         "ball_own_goal_distance_first_to_second_touch",
         "ball_opponent_goal_distance_first_to_second_touch",
         "exchange_ball_position_min_toward",
@@ -270,6 +315,35 @@ fn team_minima_exclude_demolished_cars_without_treating_their_absence_as_missing
         .abs()
             < 0.0001
     );
+    assert!(features["opponent_ball_distance_mean_candidate_to_first_touch"].is_null());
+    assert!(features["opponent_ball_distance_mean_first_to_second_touch"].is_number());
+}
+
+#[test]
+fn zero_duration_intervals_have_no_time_average() {
+    let mut document = fixture();
+    for frame in 2..=5 {
+        document["outputs"]["replay_data"]["frame_data"]["metadata_frames"][frame]["time"] =
+            json!(1.);
+    }
+    for event in document["outputs"]["events"]["events"]["events"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if event["meta"]["stream"] == "touch" {
+            let payload = &mut event["payload"]["payload"];
+            for (frame_field, time_field) in [("frame", "time"), ("sample_frame", "sample_time")] {
+                let frame = payload[frame_field].as_u64().unwrap();
+                if (2..=5).contains(&frame) {
+                    payload[time_field] = json!(1.);
+                }
+            }
+        }
+    }
+    let features = row(document)["features"].clone();
+    assert!(features["own_team_ball_distance_mean_candidate_to_first_touch"].is_null());
+    assert!(features["opponent_ball_distance_mean_candidate_to_first_touch"].is_null());
+    assert!(features["own_team_ball_distance_candidate_to_first_touch"].is_number());
 }
 
 #[test]

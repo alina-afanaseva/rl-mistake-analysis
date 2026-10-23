@@ -250,6 +250,14 @@ pub fn definitions() -> Vec<FeatureDefinition> {
                 true,
                 "events.replay_meta,events.player_activity,replay_data.frame_data",
             );
+            if sample == "candidate_to_first_touch" || sample == "first_to_second_touch" {
+                add(
+                    format!("{team}_ball_distance_mean_{sample}"),
+                    F32,
+                    true,
+                    "events.replay_meta,events.player_activity,replay_data.frame_data",
+                );
+            }
         }
         for goal in ["own", "opponent"] {
             add(

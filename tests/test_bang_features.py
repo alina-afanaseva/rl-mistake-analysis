@@ -41,7 +41,7 @@ def test_real_replay_preserves_native_candidate_identity_and_complete_contract(
         ).stdout
     )
     assert len(batch["rows"]) == len(selection[0]["candidates"]) == 108
-    assert len(batch["feature_definitions"]) == 142
+    assert len(batch["feature_definitions"]) == 146
     frames = document["outputs"]["replay_data"]["frame_data"]
     players = {json.dumps(player): data for player, data in frames["players"]}
     for candidate, row in zip(selection[0]["candidates"], batch["rows"], strict=True):
@@ -49,7 +49,7 @@ def test_real_replay_preserves_native_candidate_identity_and_complete_contract(
         for key in ("frame", "raw_time", "player_id"):
             assert row[key] == candidate[key]
         assert row["touch_id"] == candidate["evidence"]["touch_id"]
-        assert len(row["features"]) == 142
+        assert len(row["features"]) == 146
         samples = row["samples"]
         opponent = samples["closest_opponent_id"]
         if opponent is not None:
@@ -137,7 +137,7 @@ def test_parquet_reviews_and_training_arrays_preserve_types_order_and_nulls(
         "analyses": 2,
         "replays": 1,
         "rows": 108,
-        "features": 142,
+        "features": 146,
     }
     table, contract = bang_dataset.load(output)
     assert contract["replays"][0]["replay_ids"] == ["sample", "alias"]
@@ -177,7 +177,7 @@ def test_parquet_reviews_and_training_arrays_preserve_types_order_and_nulls(
     }
     prepared, training_contract = dataset.load(labeled)
     features, labels, groups = dataset.arrays(prepared, training_contract)
-    assert features.shape == (2, 142)
+    assert features.shape == (2, 146)
     assert features.dtype == np.float32
     assert labels.tolist() == [0, 1]
     assert len(set(groups)) == 1

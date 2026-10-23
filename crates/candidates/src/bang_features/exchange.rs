@@ -82,6 +82,38 @@ fn minimum(values: impl Iterator<Item = TeamDistance>) -> Option<f64> {
     nearest
 }
 
+fn mean_distance(
+    replay: &ReplayContext<'_>,
+    range: Option<(usize, usize)>,
+    team: bool,
+) -> Option<f64> {
+    let (start, end) = range?;
+    let frames = &replay
+        .context
+        .analysis
+        .outputs
+        .replay_data
+        .frame_data
+        .metadata_frames;
+    let duration = frames[end].time - frames[start].time;
+    if duration == 0.0 {
+        return None;
+    }
+    let distance = |frame: usize| {
+        let value = replay.team_distances[frame][usize::from(team)];
+        value.nearest.filter(|_| value.observed)
+    };
+    let mut previous = distance(start)?;
+    let mut integral = 0.0;
+    for frame in start + 1..=end {
+        let current = distance(frame)?;
+        let elapsed = frames[frame].time - frames[frame - 1].time;
+        integral += (previous + current) * elapsed / 2.0;
+        previous = current;
+    }
+    Some(integral / duration)
+}
+
 pub(super) fn features(
     replay: &ReplayContext<'_>,
     touch: &Event,
@@ -130,6 +162,12 @@ pub(super) fn features(
                     )
                 }),
             )?;
+            if name == "candidate_to_first_touch" || name == "first_to_second_touch" {
+                values.float(
+                    &format!("{relation}_ball_distance_mean_{name}"),
+                    mean_distance(replay, range, other_team),
+                )?;
+            }
         }
         for (goal, attacking_team) in [("own", !team), ("opponent", team)] {
             values.float(
