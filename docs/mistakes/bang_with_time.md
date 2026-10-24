@@ -30,7 +30,7 @@ The join matches replay checksum, frame, touch ID, player ID, and replay timesta
 
 ## Context extraction
 
-`bang_with_time.context.v1` contains 107 typed measurements per selected touch. Extraction uses a combined `events,replay_data` analysis. `--player PLAYER_ID_JSON` selects one judged player; the full selection contains every candidate's feature row.
+`bang_with_time.context.v1` contains 146 typed measurements per selected touch. Extraction uses a combined `events,replay_data` analysis. `--player PLAYER_ID_JSON` selects one judged player; the full selection contains every candidate's feature row.
 
 ```sh
 target/debug/rl-mistake-analysis bang-features examples/bang_sampling.json < analysis.json > features.json
@@ -146,9 +146,9 @@ Unavailable stages, bodies, states, or required velocities produce nullable meas
 | `exchange_possession_opponent_s` | nullable float32 | Sum of native opponent possession-span durations clipped to the interval from touch 0 through touch 2. | `events.possession` |
 | `exchange_possession_neutral_s` | nullable float32 | Sum of native neutral possession-span durations clipped to the interval from touch 0 through touch 2. | `events.possession` |
 
-Interval aggregates require their endpoints and complete observations throughout the interval. A missing ball frame makes trajectory and goal-distance aggregates unavailable; an unknown activity state or missing tracked car makes that team's distance aggregate unavailable. Demolished players are excluded; an interval with no tracked team car at any frame has no team-distance measurement. Possession durations are unavailable when native spans leave an unobserved gap; gaps are not counted as neutral possession.
+Interval aggregates require their endpoints and the relevant observations throughout the interval. A missing ball frame makes trajectory and goal-distance aggregates unavailable; an unknown activity state or missing tracked car makes that team's distance aggregate unavailable. Demolished players are excluded. A team-distance minimum is unavailable when no frame has a tracked car for that team. Possession durations are unavailable when native spans leave an unobserved gap; gaps are not counted as neutral possession.
 
-Team-distance means include the judged player and use trapezoidal integration of the per-frame nearest distance, divided by elapsed replay time. A mean is unavailable for a zero-duration interval or when any frame has no observed tracked car for that team.
+Team-distance means use trapezoidal integration of the per-frame nearest distance, divided by elapsed replay time. The own team includes the judged player. A mean is unavailable for a zero-duration interval or when any frame has no observed tracked car for that team.
 
 Goal openings use SubtrActor's standard Soccar dimensions and collision ball radius. Distance is the Euclidean distance from the ball center to the nearest point of the opening, minus the radius, clamped at zero. Direction checks use the measured velocity ray without gravity, defenders, later contacts, a speed threshold, or a prediction time limit. Ball-coordinate extrema use the same team axes as the contact snapshots.
 
