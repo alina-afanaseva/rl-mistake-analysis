@@ -1,4 +1,4 @@
-"""Train the selected teammate-bump classifier and export a verified model release."""
+"""Train a selected classifier and export a verified model release."""
 
 import argparse
 import hashlib
@@ -6,8 +6,11 @@ import json
 from importlib.metadata import version
 from pathlib import Path
 
+import joblib
 import numpy as np
 import onnx
+from catboost import CatBoostClassifier
+from interpret.glassbox import ExplainableBoostingClassifier
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -22,9 +25,14 @@ from xgboost import XGBClassifier
 
 from training.dataset import arrays, load, select_features
 from training.export import model_entry, write_manifest
-from training.onnx_export import verify, xgboost
+from training.onnx_export import additive_ebm, catboost, verify, xgboost
 
 CONFIG = Path(__file__).parent / "configs/bumping_teammate_0.1.0.json"
+MODELS = {
+    ("bumping_teammate", "xgboost"): (XGBClassifier, xgboost),
+    ("bang_with_time", "catboost"): (CatBoostClassifier, catboost),
+    ("bang_with_time", "additive_ebm"): (ExplainableBoostingClassifier, additive_ebm),
+}
 
 
 def partitions(labels, groups, test_replays):
@@ -72,8 +80,10 @@ def metrics(labels, probabilities, threshold):
 def train(training_table, test_replays, output, *, source_revision, config=CONFIG):
     """Fit one fixed configuration, evaluate complete held-out replays, and verify ONNX."""
     settings = json.loads(Path(config).read_text())
-    if settings["kind"] != "bumping_teammate" or settings["model"] != "xgboost":
-        raise ValueError("This recipe trains the selected teammate-bump XGBoost model")
+    identity = (settings["kind"], settings["model"])
+    if identity not in MODELS:
+        raise ValueError("Unsupported mistake kind and classifier in selected recipe")
+    classifier_type, exporter = MODELS[identity]
     release_version = settings["version"]
     if (
         not isinstance(release_version, str)
@@ -107,10 +117,28 @@ def train(training_table, test_replays, output, *, source_revision, config=CONFI
     train_rows, test_rows = partitions(
         labels, groups, json.loads(Path(test_replays).read_text())
     )
-    classifier = XGBClassifier(**settings["hyperparameters"])
-    classifier.fit(features[train_rows], labels[train_rows])
+    weighting = settings["class_weighting"]
+    fit_parameters = {}
+    if weighting == "sqrt_balanced":
+        training_labels = labels[train_rows]
+        counts = np.bincount(training_labels, minlength=2)
+        weights = np.sqrt(len(training_labels) / (2 * counts))
+        weights /= np.mean(weights[training_labels])
+        fit_parameters["sample_weight"] = weights[training_labels]
+        weighting = {
+            "method": weighting,
+            "power": 0.5,
+            "normalization": "mean training-row weight equals one",
+            "training_class_counts": counts.tolist(),
+            "training_class_weights": weights.tolist(),
+            "fit_scope": "each fit computes weights from its own training labels",
+        }
+    elif weighting != "none":
+        raise ValueError("Unsupported selected recipe class weighting")
+    classifier = classifier_type(**settings["hyperparameters"])
+    classifier.fit(features[train_rows], labels[train_rows], **fit_parameters)
     probabilities = classifier.predict_proba(features)[:, 1]
-    graph = xgboost(classifier, features)
+    graph = exporter(classifier, features)
     validation = verify(graph, features, probabilities)
     with Path(training_table).open("rb") as stream:
         dataset_hash = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -118,9 +146,10 @@ def train(training_table, test_replays, output, *, source_revision, config=CONFI
         "schema_version": 1,
         "kind": settings["kind"],
         "version": settings["version"],
+        "status": settings["status"],
         "model": settings["model"],
         "hyperparameters": settings["hyperparameters"],
-        "class_weighting": "none",
+        "class_weighting": weighting,
         "decision_threshold": threshold,
         "decision_rule": "positive probability >= decision_threshold",
         "feature_contract": {
@@ -153,7 +182,12 @@ def train(training_table, test_replays, output, *, source_revision, config=CONFI
             name: version(name)
             for name in (
                 "numpy",
-                "xgboost",
+                {
+                    "xgboost": "xgboost",
+                    "catboost": "catboost",
+                    "additive_ebm": "interpret-core",
+                }[settings["model"]],
+                "joblib",
                 "scikit-learn",
                 "onnx",
                 "onnxmltools",
@@ -161,6 +195,22 @@ def train(training_table, test_replays, output, *, source_revision, config=CONFI
             )
         },
     }
+    if settings["model"] == "additive_ebm":
+        report["fitted_parameters"] = {
+            "intercept": classifier.intercept_.tolist(),
+            "link": classifier.link_,
+            "terms": [
+                {
+                    "feature": contract["feature_names"][feature],
+                    "cuts": classifier.bins_[feature][0].tolist(),
+                    "scores": classifier.term_scores_[term].tolist(),
+                }
+                for term, (feature,) in enumerate(classifier.term_features_)
+            ],
+        }
+    elif settings["model"] == "catboost":
+        report["resolved_parameters"] = classifier.get_all_params()
+        report["tree_count"] = classifier.tree_count_
     relative = Path("models") / settings["kind"] / settings["version"]
     model_directory = output / relative
     model_directory.mkdir(parents=True, exist_ok=False)
@@ -168,7 +218,15 @@ def train(training_table, test_replays, output, *, source_revision, config=CONFI
     (model_directory / "evaluation.json").write_text(
         json.dumps(report, indent=2, allow_nan=False) + "\n"
     )
-    classifier.save_model(output / "xgboost.json")
+    if settings["model"] == "xgboost":
+        classifier.save_model(output / "xgboost.json")
+    elif settings["model"] == "catboost":
+        classifier.save_model(output / "catboost.cbm")
+    else:
+        joblib.dump(classifier, output / "ebm.joblib")
+    (output / "recipe.json").write_text(
+        json.dumps(settings, indent=2, allow_nan=False) + "\n"
+    )
     (output / "splits.json").write_text(
         json.dumps({"train": train_rows.tolist(), "test": test_rows.tolist()}, indent=2)
         + "\n"

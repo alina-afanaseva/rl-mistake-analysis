@@ -9,6 +9,8 @@ dev = ["pytest>=8,<10"]
 notebooks = ["ipykernel>=6,<8", "jupyterlab>=4,<5"]
 training = [
   "catboost>=1.2.8,<2",
+  "interpret-core==0.7.8",
+  "joblib>=1.6,<2",
   "scikit-learn>=1.6,<2",
   "onnxruntime>=1.24,<2",
   "xgboost==3.4.1",

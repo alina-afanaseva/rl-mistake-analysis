@@ -36,6 +36,31 @@ X, y, replay_groups = arrays(table, contract)
 
 Model inputs are float32 values in contract order. Boolean measurements become `0` and `1`; unavailable measurements become `NaN`. `training.dataset.select_features(contract, names, input_schema)` selects ordered inputs from the source feature definitions and preserves their frame selection settings.
 
+## Train a selected release
+
+`training.train_selected` fits one fixed release configuration, evaluates explicitly held-out replays, and verifies ONNX probabilities on every prepared row.
+
+| Kind | Version | Classifier | Inputs | Class weighting | Threshold | Configuration |
+| --- | --- | --- | --- | --- | --- | --- |
+| `bumping_teammate` | `0.1.0` | XGBoost | 90 | None | 0.40 | [Recipe](../training/configs/bumping_teammate_0.1.0.json) |
+| `bang_with_time` | `0.1.0` | CatBoost | 103 | Square-root inverse frequency | 0.40 | [Recipe](../training/configs/bang_with_time_0.1.0.json) |
+| `bang_with_time` | `0.2.0` | Additive EBM | 142 | Square-root inverse frequency | 0.40 | [Recipe](../training/configs/bang_with_time_0.2.0.json) |
+
+Prepare a labeled table using the kind's guide and create a JSON array of replay checksums to reserve for testing. Every row from those replays stays out of training. Select the configuration for the intended release:
+
+```sh
+python -m training.train_selected artifacts/bang_training.parquet \
+  data/held_out_replay_sha256.json artifacts/bang-0.2.0 \
+  --config training/configs/bang_with_time_0.2.0.json \
+  --source-revision YOUR_CODE_REVISION
+```
+
+The default configuration is teammate bump `0.1.0`. Each recipe selects its exact input order from the extracted feature catalog and requires matching frame selection settings. Bang class weights use only training labels: take the square root of inverse class frequency, then normalize the mean training-row weight to one.
+
+Use a new output directory for each run. It retains the recipe, native fitted model, split indices, labels, probabilities, evaluation report, and package versions. The ONNX model and report are stored under `models/<kind>/<version>/`, with a root model catalog. EBM reports also retain the fitted intercept, numeric cuts, and term scores.
+
+The original reviewed datasets are not distributed. Reproducing released models requires the original feature values, labels, row order, held-out replays, and training environment. Training with your own data produces a new fitted model. Release comparisons and evaluation results are available in the [model repository](https://huggingface.co/alina-afanaseva/rl-mistake-analysis-models).
+
 ## Compare your own models
 
 `training.evaluation.evaluate_models` runs the same grid search, refit, prediction, and metrics for each `ModelSpec`. Supply training and held-out test data and a cross-validation strategy. Features pass directly to each estimator. Binary labels use `1` for a mistake and `0` for a non-mistake.
@@ -69,7 +94,7 @@ Each parameter combination records validation accuracy, balanced accuracy, preci
 
 Keep all examples from a replay together when creating the train/test partition, as well as within cross-validation. Estimator fit parameters use training data. Every training, validation, and test partition must contain both classes for the reported metrics.
 
-Run `nix-shell` to activate the training environment. Nix supplies scikit-learn and the native ONNX Runtime library. The shell installs CatBoost, XGBoost, the ONNX converters, and Python ONNX Runtime in `.venv`. The `training` dependency group also supports environments managed entirely by uv: `uv sync --locked --group training`.
+Run `nix-shell` to activate the training environment. Nix supplies scikit-learn and the native ONNX Runtime library. The shell installs CatBoost, InterpretML, XGBoost, the ONNX converters, and Python ONNX Runtime in `.venv`. The `training` dependency group also supports environments managed entirely by uv: `uv sync --locked --group training`.
 
 ## Save evaluation results
 

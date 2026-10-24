@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 import onnxruntime as ort
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 
 
 def catboost(model, example):
@@ -93,6 +93,76 @@ def xgboost(model, example):
     del graph.graph.output[:]
     graph.graph.output.append(
         helper.make_tensor_value_info("score", TensorProto.FLOAT, [None, 1])
+    )
+    onnx.checker.check_model(graph)
+    return graph
+
+
+def additive_ebm(model, example):
+    """Export numeric additive EBM bin lookups with one positive probability output."""
+    features = np.asarray(example, dtype=np.float32)
+    if not np.array_equal(model.classes_, [0, 1]) or model.link_ != "logit":
+        raise ValueError("EBM export requires binary classes 0 and 1 with a logit link")
+    if features.ndim != 2 or features.shape[1] != model.n_features_in_:
+        raise ValueError("Export example must match the fitted feature width")
+    if any(kind != "continuous" for kind in model.feature_types_in_) or any(
+        len(term) != 1 for term in model.term_features_
+    ):
+        raise ValueError(
+            "EBM export requires numeric main effects without interactions"
+        )
+    nodes, constants, contributions = [], [], []
+
+    def constant(name, values, dtype):
+        constants.append(numpy_helper.from_array(np.asarray(values, dtype=dtype), name))
+        return name
+
+    def node(operation, inputs, output, **attributes):
+        nodes.append(helper.make_node(operation, inputs, [output], **attributes))
+        return output
+
+    zero = constant("missing_bin", [0], np.int64)
+    one = constant("bin_offset", [1], np.int64)
+    axis = constant("bin_axis", [1], np.int64)
+    double_features = node(
+        "Cast", ["features"], "double_features", to=TensorProto.DOUBLE
+    )
+    for term, (feature,) in enumerate(model.term_features_):
+        prefix = f"term_{term}_"
+        column = constant(prefix + "column", [feature], np.int64)
+        values = node("Gather", [double_features, column], prefix + "values", axis=1)
+        cuts = model.bins_[feature][0]
+        if not isinstance(cuts, np.ndarray):
+            raise ValueError("EBM export requires numeric cut arrays")
+        boundaries = constant(prefix + "cuts", cuts, np.float64)
+        flags = node("GreaterOrEqual", [values, boundaries], prefix + "flags")
+        flags = node("Cast", [flags], prefix + "integer_flags", to=TensorProto.INT64)
+        count = node("ReduceSum", [flags, axis], prefix + "count", keepdims=1)
+        bins = node("Add", [count, one], prefix + "bins")
+        missing = node("IsNaN", [values], prefix + "missing")
+        bins = node("Where", [missing, zero, bins], prefix + "observed_bins")
+        scores = constant(prefix + "scores", model.term_scores_[term], np.float64)
+        contributions.append(
+            node("Gather", [scores, bins], prefix + "contribution", axis=0)
+        )
+    intercept = constant("intercept", model.intercept_, np.float64)
+    total = node("Sum", [*contributions, intercept], "log_odds")
+    probability = node("Sigmoid", [total], "probability")
+    node("Cast", [probability], "score", to=TensorProto.FLOAT)
+    graph = helper.make_model(
+        helper.make_graph(
+            nodes,
+            "additive_ebm",
+            [
+                helper.make_tensor_value_info(
+                    "features", TensorProto.FLOAT, [None, features.shape[1]]
+                )
+            ],
+            [helper.make_tensor_value_info("score", TensorProto.FLOAT, [None, 1])],
+            initializer=constants,
+        ),
+        opset_imports=[helper.make_opsetid("", 13)],
+        ir_version=8,
     )
     onnx.checker.check_model(graph)
     return graph
