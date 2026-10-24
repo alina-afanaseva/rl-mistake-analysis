@@ -41,7 +41,7 @@ def test_real_replay_preserves_native_candidate_identity_and_complete_contract(
         ).stdout
     )
     assert len(batch["rows"]) == len(selection[0]["candidates"]) == 57
-    assert len(batch["feature_definitions"]) == 146
+    assert len(batch["feature_definitions"]) == 163
     frames = document["outputs"]["replay_data"]["frame_data"]
     events = document["outputs"]["events"]["events"]["events"]
     touches = {
@@ -60,7 +60,7 @@ def test_real_replay_preserves_native_candidate_identity_and_complete_contract(
         for key in ("frame", "raw_time", "player_id"):
             assert row[key] == candidate[key]
         assert row["touch_id"] == candidate["evidence"]["touch_id"]
-        assert len(row["features"]) == 146
+        assert len(row["features"]) == 163
         samples = row["samples"]
         assert row["features"]["first_touch_opponent"] is True
         checked_touches = [
@@ -162,7 +162,7 @@ def test_parquet_reviews_and_training_arrays_preserve_types_order_and_nulls(
         "analyses": 2,
         "replays": 1,
         "rows": 57,
-        "features": 146,
+        "features": 163,
     }
     table, contract = bang_dataset.load(output)
     assert contract["replays"][0]["replay_ids"] == ["sample", "alias"]
@@ -174,6 +174,7 @@ def test_parquet_reviews_and_training_arrays_preserve_types_order_and_nulls(
         ("touches_before_next_goal", pa.uint32()),
         ("approaching_teammate_count", pa.uint32()),
         ("approaching_opponent_count", pa.uint32()),
+        ("subject_consecutive_touches_before_candidate", pa.uint32()),
         ("closest_opponent_boost_before_pct", pa.float32()),
     ]:
         assert table[name].type == data_type
@@ -210,7 +211,7 @@ def test_parquet_reviews_and_training_arrays_preserve_types_order_and_nulls(
     }
     prepared, training_contract = dataset.load(labeled)
     features, labels, groups = dataset.arrays(prepared, training_contract)
-    assert features.shape == (2, 146)
+    assert features.shape == (2, 163)
     assert features.dtype == np.float32
     assert np.isnan(
         features[0, training_contract["feature_names"].index("second_touch_delay_s")]
