@@ -8,6 +8,7 @@ These formats connect replay extraction, human review, training, and inference. 
 | Replay events | JSON | Input to candidate extraction |
 | Candidates | JSON | Incidents for review or scoring |
 | Human annotations | JSON | Reviewed incidents and recording references |
+| Feature table | Parquet | Typed measurements and extraction provenance |
 | Training table | Parquet | Features and labels for model fitting |
 | Model catalog | `manifest.json` | Available releases and required artifacts |
 | Model | ONNX | Classifier computation and learned parameters |
@@ -26,13 +27,13 @@ The document carries the same identity fields as the replay-events format below:
 | `stats_timeline` | Full SubtrActor statistics snapshots at each replay frame, with configuration, metadata, and events |
 | `features` | Numeric matrix as JSON rows under `matrix`, with SubtrActor's replay metadata and column headers under `metadata` |
 
-Payloads preserve the supplier's field names and structure. Analysis event records are at `outputs.events.events.events`; boost tracks are at `outputs.events.accumulation_tracks`; structured frame data is at `outputs.replay_data.frame_data`. Presence of a supplier field does not guarantee a measurement is available in every replay or frame.
+Payloads preserve the supplier's field names and structure. Analysis event records are at `outputs.events.events.events`; boost tracks are at `outputs.events.accumulation_tracks`; structured frame data is at `outputs.replay_data.frame_data`.
 
 The feature matrix uses `NDArrayCollector<f32>`'s default feature adders: ball rigid body globally, and each player's rigid body, boost, and jump state. `metadata.column_headers` describes global and per-player columns; `metadata.replay_meta` defines the player order. Each matrix row stores the global columns followed by the player columns in that order. This supplier matrix is separate from the mistake model's feature contract. Statistics use the supplier's default modules.
 
-Candidate extraction and scoring accept this document when the `events` output is present, using its event records with the shared identity. An export without that output is rejected. The other selected payloads remain available for feature calculations that use additional context.
+Candidate extraction and scoring accept this document when the `events` output is present, using its event records with the shared identity. The other selected payloads remain available for feature calculations that use additional context.
 
-`outputs` lists the five implemented output keys. Unknown, empty, and duplicate selections fail; they are never replaced with another output. The five forms correspond to SubtrActor's [documented primary output layers](https://github.com/rlrml/subtr-actor/blob/40ec533da4184e46418b742804818a326b50b489/src/lib.rs#L30).
+`outputs` lists the five implemented output keys. The five forms correspond to SubtrActor's [documented primary output layers](https://github.com/rlrml/subtr-actor/blob/40ec533da4184e46418b742804818a326b50b489/src/lib.rs#L30).
 
 ## Replay events
 
@@ -52,7 +53,7 @@ Each event has a `meta` object and a `payload`. Inside `meta`, `stream` identifi
 
 ## Candidates
 
-Candidate extraction selects incidents worth reviewing and records eight incident measurements. Results are grouped by recording and mistake kind into a **batch**. Subject-specific training and scoring features are computed separately.
+A **candidate** is an event to review for one player. A **batch** contains the candidates for one replay and one mistake kind. Each kind defines which events to keep and how to identify them. Measurements for training and scoring are calculated separately.
 
 | Batch field | Meaning |
 | --- | --- |
@@ -63,11 +64,15 @@ Candidate extraction selects incidents worth reviewing and records eight inciden
 | `replay_sha256` | Checksum of the original recording bytes |
 | `candidates` | Selected incidents |
 
-Each candidate records its `kind`, original `frame` and `raw_time`, subject `player_id`, numeric `features`, original event `evidence`, and `source_event_ids`. Features follow the batch's declared order. Evidence preserves the supplier information needed to identify and inspect the incident.
+Each candidate contains the mistake `kind`, frame number and time (`frame`, `raw_time`), player being evaluated (`player_id`), measurements (`features`), original event data (`evidence`), and original event IDs (`source_event_ids`). Measurements follow the order in `feature_names`.
 
-Each teammate collision produces two candidates with the same eight measurements, evidence, collision anchor, and source event IDs. Their `player_id` values distinguish the independent reviews. The incident measurements alone do not express either player's responsibility.
+## Context measurements
 
-Subject-specific scoring uses the separate context feature contract, including its sampling configuration and ordered typed feature definitions. Unavailable context measurements remain JSON `null`; boolean model inputs are `0` or `1`. Eight-feature models were trained to judge the initiator and cannot judge victims using the same incident vector.
+Context extractors produce one row per selected incident and subject. A batch carries `input_schema`, `engine_revision`, `replay_sha256`, `sampling`, ordered `feature_definitions`, and `rows`.
+
+Each feature definition declares a `name`, `data_type` (`boolean`, `f32`, or `u32`), `nullable`, and `source`. Rows contain the incident key, judged player, source event, timestamp, actual sample references, and a feature-name-to-value map. JSON `null` represents an unavailable observation.
+
+The kind's base context schema defines the measurements and units. Models select unique known names in their declared order. A named selection uses `BASE_SCHEMA.NAME.v1`, where `NAME` contains letters, digits, or underscores. Changes to measurement meaning or units use a new base schema version.
 
 ## Human annotations
 
@@ -89,7 +94,7 @@ Each recording reference has the following structure. Replace the placeholders w
 }
 ```
 
-The `id` inside the `download` object is a Ballchasing identifier, not a filename or website address. The fetch tool uses it to request the recording from Ballchasing. The header ID identifies the recording independently of its host; the checksum verifies the exact downloaded bytes.
+The `id` inside the `download` object is a Ballchasing identifier. The fetch tool uses it to request the recording from Ballchasing. The header ID identifies the recording independently of its host; the checksum verifies the exact downloaded bytes.
 
 | Annotation field | Meaning |
 | --- | --- |
@@ -106,22 +111,26 @@ The `id` inside the `download` object is a Ballchasing identifier, not a filenam
 
 To retrieve an annotation's recording, find the entry in `replays` with the same checksum, then use that entry's download source and replay ID. The recording reference is stored once and shared by every annotation for that recording.
 
-The fetch tool saves the original binary file unchanged. Its local filename is the recording's 64-character checksum followed by `.replay`. Without a download reference, supply the original file with that name in the preparation directory.
+The fetch tool saves the original binary file unchanged. Its local filename is the recording's 64-character checksum followed by `.replay`. Locally supplied recordings use the same filename in the preparation directory.
 
-Within a recording, each kind defines the fields that identify an incident. The judged player, incident identity, time, and evidence must agree; duplicate reviews of the same participant in an incident are errors. Both participants can have separate decisions. Source event IDs are provenance, rather than the matching key.
+Within a recording, each kind defines the fields that identify an incident. The judged player, incident identity, time, and evidence must agree; duplicate reviews of the same participant in an incident are errors. Each subject can have a separate decision. Source event IDs preserve extraction provenance.
 
-Native `prepare` accepts initiator labels only and rejects victim labels before reading recordings. Use `training.bump_dataset` to prepare player-specific context training data for either participant. An annotation without `player_id` is rejected; it is never assigned to the initiator implicitly.
+`validate-annotations` checks recording references, incident and player identities, evidence, labels, timestamps, and provenance.
 
-## Training tables
+## Feature and training tables
 
-Preparation combines human labels with recalculated features. One Parquet table contains one mistake kind, with one incident per row:
+Preparation combines human labels with recalculated features. One Parquet table contains one mistake kind, with one incident and subject per row:
 
 - Recording checksum and kind-specific incident identity.
 - `raw_time`, binary `label`, and optional `reject_reason`.
 - `engine_revision`, `annotation_engine_revision`, and `source_event_ids`.
-- A numeric column for each feature.
+- A typed column for each feature.
 
 The two revision columns distinguish preparation's supplier code from the code used when the incident was reviewed. File metadata named `rl_mistake_analysis` contains `schema_version: 1`, `kind`, `input_schema`, ordered `feature_names`, and `replays`. Readers use this metadata to select model inputs in the correct order. All selected annotations must match before the table is saved.
+
+Context tables use metadata named `rl_mistake_analysis_features`, with ordered typed `feature_definitions` and a `sampling` contract. Feature columns retain their boolean, float32 or uint32 types and declared nullability. Feature rows retain the kind-specific incident key, judged player, source event, and actual sample references. Annotation joins preserve the feature contract and column order.
+
+The shared dataset API converts declared features into ordered float32 model inputs. Boolean values become `0` and `1`; nullable measurements become `NaN`. It returns labels and recording checksums alongside the input matrix for grouped training and evaluation.
 
 ## Models and catalog
 
@@ -133,7 +142,7 @@ ONNX contains the classifier's operations, learned parameters, and exported prep
 | `version` | Model release version |
 | `input_schema` | Required feature contract identifier |
 | `feature_names` | Required feature names in model input order |
-| `sampling` | Required context sampling configuration; omitted by native models |
+| `sampling` | Settings for selecting measurement frames |
 | `runtime` | `onnx` |
 | `model_file` | Relative path to the ONNX graph |
 | `evaluation_file` | Relative path to the evaluation report |
@@ -142,14 +151,18 @@ ONNX contains the classifier's operations, learned parameters, and exported prep
 | `provenance` | Training `source_revision` and supplier `engine_revisions` |
 | `files` | Required artifacts, each with `path` and integrity checksum `sha256` |
 
-Several releases can coexist. Each must declare its graph, evaluation report, and any external weight files. Consumers download the selected release's files; checksums verify them. Feature compatibility depends on the contract, rather than an exact supplier revision. Context models may select any nonempty subset of known features in their declared `feature_names` order. Adding measurements to the extractor preserves existing selections. Change the base contract version for incompatible changes to feature meaning or units. See [model-defined feature subsets](mistakes/bumping_teammate.md#model-defined-feature-subsets).
+Several releases can coexist. Each must declare its graph, evaluation report, and any external weight files. Consumers download the selected release's files; checksums verify them. Feature compatibility depends on the contract. Context models may select any nonempty subset of known features in their declared `feature_names` order. Adding measurements to the extractor preserves existing selections. Change the base contract version for incompatible changes to feature meaning or units. See [context measurements](#context-measurements) for named selections.
 
-The ONNX interface accepts one float32 table `[N, F]` and returns probabilities `[N, 1]`: `N` incidents, `F` ordered features, one probability in `[0, 1]` per incident. The incident count is dynamic.
+The ONNX interface accepts one float32 table `[N, F]` and returns probabilities `[N, 1]`: `N` incidents, `F` ordered features, one probability in `[0, 1]` per incident. The incident count is dynamic. Model selection and release preparation are described in the [training guide](training.md).
 
 ## Predictions
 
-A prediction batch carries the recording and feature-contract metadata, a `model` object containing `kind`, `version`, and `sha256`, and a `predictions` list. Each prediction contains the original `candidate`, probability `score`, and boolean `keep`. An incident is retained when its score meets `keep_threshold`. Stored predictions identify the model that produced them.
+A prediction batch records the candidate contract in `input_schema` and `feature_names`, the model contract in `model_input_schema` and `model_feature_names`, recording and extraction provenance, context `sampling` where applicable, model identity, and `predictions`.
+
+Each prediction contains the original `candidate`, probability `score`, and threshold decision `keep`. The `model` identity contains `kind`, `version`, and a checksum of the selected release metadata.
 
 ## Mistake-specific contracts
 
-[Teammate bump](mistakes/bumping_teammate.md) documents incident identity, candidate model features, context feature extraction, and sampling.
+[Teammate bump](mistakes/bumping_teammate.md) documents incident identity, candidate model features, context feature extraction, and frame selection.
+
+[Bang with time](mistakes/bang_with_time.md) documents the touch identity key, candidate selection, context measurements and annotation joins.

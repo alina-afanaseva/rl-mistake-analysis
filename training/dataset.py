@@ -7,15 +7,19 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from training import bump_dataset
+from training import bang_dataset, bump_dataset, context_dataset
 
 
 def load(path):
     metadata = pq.read_schema(path).metadata
-    if metadata and bump_dataset.METADATA_KEY in metadata:
+    if metadata and context_dataset.METADATA_KEY in metadata:
         if b"rl_mistake_analysis" in metadata:
             raise ValueError("A table must declare exactly one feature contract")
-        table, contract = bump_dataset.load(path, labeled=True)
+        kind = json.loads(metadata[context_dataset.METADATA_KEY])["kind"]
+        readers = {"bumping_teammate": bump_dataset, "bang_with_time": bang_dataset}
+        if kind not in readers:
+            raise ValueError(f"Unsupported context kind: {kind}")
+        table, contract = readers[kind].load(path, labeled=True)
         contract = {
             **contract,
             "feature_names": [d["name"] for d in contract["feature_definitions"]],
@@ -93,8 +97,11 @@ def load(path):
 
 
 def arrays(table, contract):
-    if bump_dataset.supports_schema(contract["input_schema"]):
-        return bump_dataset.arrays(table, contract)
+    if any(
+        reader.supports_schema(contract["input_schema"])
+        for reader in (bump_dataset, bang_dataset)
+    ):
+        return context_dataset.arrays(table, contract)
     features = np.column_stack(
         [table[name].to_numpy() for name in contract["feature_names"]]
     )
@@ -112,9 +119,11 @@ def arrays(table, contract):
 
 def select_features(contract, names, input_schema):
     """Select ordered context inputs without changing their definitions or sampling."""
-    if not bump_dataset.supports_schema(
-        contract["input_schema"]
-    ) or not bump_dataset.supports_schema(input_schema):
+    if not any(
+        reader.supports_schema(contract["input_schema"])
+        and reader.supports_schema(input_schema)
+        for reader in (bump_dataset, bang_dataset)
+    ):
         raise ValueError("Feature selection requires supported context schemas")
     available = {
         feature["name"]: feature for feature in contract["feature_definitions"]

@@ -1,21 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DataType {
-    Boolean,
-    F32,
-    U32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeatureDefinition {
-    pub name: String,
-    pub data_type: DataType,
-    pub nullable: bool,
-    pub source: String,
-}
+pub use crate::feature_values::{DataType, FeatureDefinition};
 
 pub fn definitions() -> Vec<FeatureDefinition> {
     use DataType::{Boolean, F32, U32};

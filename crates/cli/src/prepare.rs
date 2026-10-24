@@ -37,6 +37,9 @@ pub fn prepare(
     output: &Path,
     kind: MistakeKind,
 ) -> Result<usize, Error> {
+    if kind != MistakeKind::BumpingTeammate {
+        return Err("native preparation requires bumping_teammate; join touch annotations to feature tables with training.bang_dataset".into());
+    }
     if output.extension().and_then(|value| value.to_str()) != Some("parquet") {
         return Err("prepared data must use a .parquet extension".into());
     }
@@ -52,7 +55,9 @@ pub fn prepare(
             continue;
         }
         for annotation in &labels {
-            let IncidentAnchor::BumpingTeammate { initiator, .. } = &annotation.incident;
+            let IncidentAnchor::BumpingTeammate { initiator, .. } = &annotation.incident else {
+                return Err("native preparation requires bump annotations".into());
+            };
             if annotation.player_id != *initiator {
                 return Err("native preparation requires initiator labels; use training.bump_dataset for victim labels".into());
             }
@@ -177,7 +182,10 @@ fn write_table(
                     .map(|row| {
                         let IncidentAnchor::BumpingTeammate {
                             initiator, victim, ..
-                        } = &row.annotation.incident;
+                        } = &row.annotation.incident
+                        else {
+                            unreachable!("native preparation validates the annotation kind")
+                        };
                         ByteArray::from(
                             if is_initiator { initiator } else { victim }
                                 .to_string()

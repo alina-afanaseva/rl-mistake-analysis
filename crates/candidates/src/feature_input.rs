@@ -21,8 +21,20 @@ pub(crate) struct Outputs {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Timeline {
+    pub replay_meta: Option<Roster>,
     pub events: Events,
     pub accumulation_tracks: Vec<Track>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Roster {
+    pub team_zero: Vec<RosterPlayer>,
+    pub team_one: Vec<RosterPlayer>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RosterPlayer {
+    pub remote_id: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,6 +198,14 @@ pub(crate) struct Vector {
 }
 
 impl Vector {
+    pub fn length(self) -> f64 {
+        self.x.hypot(self.y).hypot(self.z)
+    }
+
+    pub fn dot(self, other: Self) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
     pub fn subtract(self, other: Self) -> Self {
         Self {
             x: self.x - other.x,
@@ -280,6 +300,25 @@ pub(crate) struct Pad {
 }
 
 impl ReplayAnalysis {
+    pub(crate) fn facts(&self) -> crate::ReplayFacts {
+        crate::ReplayFacts {
+            name: self.name.clone(),
+            schema_version: self.schema_version,
+            status: self.status.clone(),
+            revision: self.revision.clone(),
+            replay_sha256: self.replay_sha256.clone(),
+            rocket_league_id: None,
+            events: self.outputs.events.events.events.iter().map(|event| {
+                crate::input::MechanicEvent {
+                    meta: crate::input::EventMeta {
+                        id: event.meta.id.clone(), stream: event.meta.stream.clone(),
+                    },
+                    payload: serde_json::json!({"kind": event.payload.kind, "payload": event.payload.payload}),
+                }
+            }).collect(),
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.name != "subtr-actor"
             || self.schema_version != 1

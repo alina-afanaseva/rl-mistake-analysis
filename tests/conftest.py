@@ -29,3 +29,21 @@ def engine():
         ) == "rl-mistake-analysis" and message.get("executable"):
             return Path(message["executable"])
     raise AssertionError("CLI build produced no executable")
+
+
+@pytest.fixture(scope="session")
+def combined_analysis(engine, tmp_path_factory):
+    path = tmp_path_factory.mktemp("bump-features") / "sample.json"
+    with path.open("wb") as output:
+        subprocess.run(
+            [
+                str(engine),
+                "extract",
+                str(
+                    Path(__file__).resolve().parents[1] / "tests/fixtures/sample.replay"
+                ),
+            ],
+            stdout=output,
+            check=True,
+        )
+    return path

@@ -2,6 +2,7 @@
   "kind": "bumping_teammate",
   "version": "0.1.0",
   "model": "xgboost",
+  "class_weighting": "none",
   "status": "experimental",
   "input_schema": "bumping_teammate.context.v1.expanded90.v1",
   "sampling": {"method": "first_acceleration_peak_then_minimum"},

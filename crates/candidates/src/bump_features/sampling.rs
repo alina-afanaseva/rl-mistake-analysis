@@ -1,17 +1,5 @@
-use super::input::{Metadata, PlayerData};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeatureSampling {
-    pub method: SamplingMethod,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SamplingMethod {
-    FirstAccelerationPeakThenMinimum,
-}
+use crate::feature_input::{Metadata, PlayerData};
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct ParticipantSamples {
@@ -80,21 +68,6 @@ fn acceleration(
 }
 
 pub(super) fn measure(
-    player: &PlayerData,
-    frames: &[Metadata],
-    bump_frame: usize,
-    play_start: f64,
-    play_end: f64,
-    sampling: FeatureSampling,
-) -> ParticipantSamples {
-    match sampling.method {
-        SamplingMethod::FirstAccelerationPeakThenMinimum => {
-            peak_then_minimum(player, frames, bump_frame, play_start, play_end)
-        }
-    }
-}
-
-fn peak_then_minimum(
     player: &PlayerData,
     frames: &[Metadata],
     bump_frame: usize,

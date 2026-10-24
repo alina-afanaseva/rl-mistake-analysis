@@ -9,7 +9,7 @@ from pathlib import Path
 
 import onnx
 
-from training.bump_dataset import supports_schema
+from training import bang_dataset, bump_dataset
 from training.dataset import load, select_features
 
 
@@ -110,7 +110,10 @@ def model_entry(
         },
         "files": files,
     }
-    if supports_schema(contract["input_schema"]):
+    if any(
+        reader.supports_schema(contract["input_schema"])
+        for reader in (bump_dataset, bang_dataset)
+    ):
         entry["sampling"] = contract["sampling"]
     return entry
 

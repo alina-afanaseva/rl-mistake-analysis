@@ -13,12 +13,17 @@ pub enum IncidentAnchor {
         initiator: Value,
         victim: Value,
     },
+    BangWithTime {
+        frame: u64,
+        touch_id: u64,
+    },
 }
 
 impl IncidentAnchor {
     pub fn kind(&self) -> MistakeKind {
         match self {
             Self::BumpingTeammate { .. } => MistakeKind::BumpingTeammate,
+            Self::BangWithTime { .. } => MistakeKind::BangWithTime,
         }
     }
 
@@ -85,7 +90,8 @@ impl Annotation {
             return Err("invalid annotation fingerprint, label, time, or provenance".into());
         }
         let candidate = match &self.incident {
-            IncidentAnchor::BumpingTeammate { frame, .. } => Candidate {
+            IncidentAnchor::BumpingTeammate { frame, .. }
+            | IncidentAnchor::BangWithTime { frame, .. } => Candidate {
                 kind: self.incident.kind().name().into(),
                 frame: *frame,
                 raw_time: self.raw_time,
@@ -95,7 +101,6 @@ impl Annotation {
                 features: Vec::new(),
             },
         };
-        crate::native_bump::validate_evidence(&candidate.evidence)?;
         if candidate.anchor()? != self.incident {
             return Err("annotation anchor does not agree with its event evidence".into());
         }
