@@ -68,17 +68,17 @@ fn fixture() -> Value {
         candidate,
         touch(
             2,
-            5,
+            12,
             2,
             true,
-            json!([{"group": "action", "value": "pass"}, {"group": "contested", "value": "contested"}]),
+            json!([{"group": "action", "value": "pass"}]),
         ),
         touch(
             3,
             5,
             3,
             false,
-            json!([{"group": "action", "value": "shot"}, {"group": "possession", "value": "control"}, {"group": "contested", "value": "contested"}]),
+            json!([{"group": "action", "value": "shot"}, {"group": "possession", "value": "control"}]),
         ),
         touch(
             4,
@@ -447,14 +447,22 @@ fn goal_distances_allow_ball_overlap_and_direction_uses_the_native_velocity_ray(
 
 #[test]
 fn native_stages_preserve_simultaneous_touches_and_candidate_provenance() {
-    let row = row(fixture());
+    let mut document = fixture();
+    add_opponent(&mut document, 5, body(10000., 20000., 10000.), 255.);
+    document["outputs"]["events"]["events"]["events"][2] = touch(
+        2,
+        5,
+        5,
+        false,
+        json!([{"group": "action", "value": "pass"}]),
+    );
+    let row = row(document);
     assert_eq!(row["touch_id"], 1);
     assert_eq!(row["samples"]["outgoing_sample_frame"], 2);
     assert_eq!(row["samples"]["first_touch"]["touch_ids"], json!([2, 3]));
     assert_eq!(row["samples"]["second_touch"]["touch_ids"], json!([4]));
     let f = &row["features"];
     for name in [
-        "first_touch_teammate",
         "first_touch_opponent",
         "second_touch_self",
         "first_touch_action_pass",
@@ -473,6 +481,7 @@ fn native_stages_preserve_simultaneous_touches_and_candidate_provenance() {
     ] {
         assert_eq!(f[name], true, "{name}");
     }
+    assert_eq!(f["first_touch_teammate"], false);
     for (name, value) in [
         ("candidate_incoming_ball_speed", 13.),
         ("candidate_outgoing_ball_speed", 13.),
@@ -758,6 +767,7 @@ fn demolition_activity_excludes_cars_until_native_respawn() {
     });
     events.push(activity(3, false, "demolished", 0, 1));
     events.push(activity(3, false, "tracked", 1, 13));
+    events.push(touch(5, 9, 3, false, json!([])));
     for event in events.iter_mut().filter(|event| {
         event["meta"]["stream"] == "player_activity"
             && event["payload"]["payload"]["player"]["Steam"] == 4

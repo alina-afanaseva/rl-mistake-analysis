@@ -9,11 +9,11 @@ target/debug/rl-mistake-analysis candidates bang_with_time < analysis.json > can
 target/debug/rl-mistake-analysis contract bang_with_time
 ```
 
-Candidates come from SubtrActor's ball-touch events, ordered by frame and touch ID. Group consecutive touches by one player when they fall within one recorded period of that player's possession. Their team must have possession throughout, with play active. Keep the last touch in each group.
+Candidates come from SubtrActor's original ball-touch timeline, ordered by frame and touch ID. Keep a touch when the next distinct contact frame includes an opponent. A following touch by only the same player or teammates does not qualify. Lookahead stops at the play's goal or next kickoff; a touch with no later contact in that play is excluded.
 
-A touch by another player, several players touching in one frame, a contested touch, or a fifty between touches ends the group. A gap or change in possession also ends it. Remove touches tagged `contested=contested` and touches on the frames recorded as either team's first touch in a fifty.
+Exclude the candidate when its own touch or any touch at the next contact frame is tagged `contested=contested` or falls within a native fifty's `start_frame` through `resolve_frame`, inclusive. A bang followed by a fifty is therefore excluded too. Keep all contacts in the timeline used for lookahead; an excluded next contact does not permit selecting a later opponent touch. Simultaneous touchers at the next frame are considered together.
 
-For example, continuous possession across touches at frames 10, 20, and 30 keeps frame 30. A fifty at frame 20 leaves frames 10 and 30 as candidates.
+For example, a player's touches at frames 10 and 11 followed by an opponent at frame 20 keep only frame 11. A teammate's touch between frame 11 and the opponent instead makes that teammate's touch the candidate. Recorded player-possession intervals are not required.
 
 Each candidate is identified by the replay checksum, frame, touch ID, and player: `(replay_sha256, frame, touch_id, player_id)`. The output uses schema `bang_with_time.candidates.v1` and keeps the original touch in `evidence`, including its `touch_id`, along with the source event ID, time, and supplier revision.
 
