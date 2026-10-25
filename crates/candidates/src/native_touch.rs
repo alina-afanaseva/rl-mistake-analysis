@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
 
-pub const SCHEMA: &str = "bang_with_time.candidates.v1";
+pub const SCHEMA: &str = "bang_with_time.candidates.v2";
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]

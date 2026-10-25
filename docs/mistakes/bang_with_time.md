@@ -15,7 +15,9 @@ Exclude the candidate when its own touch or any touch at the next contact frame 
 
 For example, a player's touches at frames 10 and 11 followed by an opponent at frame 20 keep only frame 11. A teammate's touch between frame 11 and the opponent instead makes that teammate's touch the candidate. Recorded player-possession intervals are not required.
 
-Each candidate is identified by the replay checksum, frame, touch ID, and player: `(replay_sha256, frame, touch_id, player_id)`. The output uses schema `bang_with_time.candidates.v1` and keeps the original touch in `evidence`, including its `touch_id`, along with the source event ID, time, and supplier revision.
+Each candidate is identified by the replay checksum, frame, touch ID, and player: `(replay_sha256, frame, touch_id, player_id)`. The output uses schema `bang_with_time.candidates.v2` and keeps the original touch in `evidence`, including its `touch_id`, along with the source event ID, time, and supplier revision.
+
+Candidate contract v2 requires the following opponent contact and excludes fifties at both contacts. It is independent of the numeric feature schema `bang_with_time.context.v1`. Model metadata can record the candidate contract alongside the numeric feature schema.
 
 ## Annotations
 
